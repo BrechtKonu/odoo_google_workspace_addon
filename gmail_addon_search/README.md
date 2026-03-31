@@ -1,162 +1,92 @@
 # gmail_addon_search — Odoo Companion Module
 
-Odoo 19+ module that provides the backend API endpoints used by the **Gmail Add-on** (`gmail_addon/`).
+Odoo 19+ companion module for the Google Workspace add-on in this repository. It exposes the JSON-RPC endpoints used by Gmail, Docs, Sheets, and Chat, and it adds Odoo settings for Gmail-specific field configuration.
 
-Without this module, the Gmail add-on cannot search tasks, create records, or log emails. The Docs/Sheets and Chat add-ons do **not** require this module.
+## What it provides
 
----
+### Record APIs
 
-## What this module provides
+- Task search, create, and email logging
+- Ticket search, create, and email logging
+- CRM lead/opportunity search, create, and email logging
+- Linked-record lookup for Gmail threads and linked Docs/Sheets files
+- Sender-context suggestion for recent and recommended records
 
-| Endpoint | Description |
-|----------|-------------|
-| `/gmail_addon/suggest_context` | Detect Odoo partner from sender email; suggest project/team |
-| `/gmail_addon/search_tasks` | Search `project.task` with domain filters |
-| `/gmail_addon/search_tickets` | Search `helpdesk.ticket` with domain filters |
-| `/gmail_addon/create_task` | Create a new task pre-filled from email data |
-| `/gmail_addon/create_ticket` | Create a new helpdesk ticket |
-| `/gmail_addon/log_email` | Post email as internal note on a task or ticket |
-| `/gmail_addon/autocomplete` | Autocomplete partners, projects, stages, teams |
+### Odoo configuration
 
-Authentication uses the `mail_plugin` Bearer token flow (Odoo API key passed as `Authorization: Bearer <api_key>`).
+In **Settings**, admins can configure per model:
 
----
+- which field is used as the displayed/searchable reference
+- which extra fields should appear on Gmail create forms
+- a direct Outlook manifest download link generated from the current Odoo base URL
+
+Supported model groups:
+
+- `project.task`
+- `helpdesk.ticket`
+- `crm.lead`
+
+### Odoo model additions
+
+- `gmail.email.link` for Gmail thread/message to Odoo record links
+- `gmail.document.link` for Docs/Sheets links
+- task and helpdesk stage flags to hide stages from add-on search
+
+## Important routes
+
+| Route | Purpose |
+|------|---------|
+| `/gmail_addon/suggest_context` | Sender matching, suggested records, recent items |
+| `/gmail_addon/task/search` | Search tasks |
+| `/gmail_addon/task/create` | Create task |
+| `/gmail_addon/ticket/search` | Search tickets |
+| `/gmail_addon/ticket/create` | Create ticket |
+| `/gmail_addon/lead/search` | Search leads and opportunities |
+| `/gmail_addon/lead/create` | Create lead or opportunity |
+| `/gmail_addon/log_email` | Post current email as note on a record |
+| `/gmail_addon/form/schema` | Return Gmail form schema for configured extra fields |
+
+Authentication uses the `mail_plugin` Bearer-token flow:
+
+`Authorization: Bearer <odoo_api_key>`
 
 ## Requirements
 
-- Odoo **19.0** or later
-- Odoo modules: `mail_plugin`, `project` (installed as dependencies)
-- Optional: `helpdesk` module (Odoo Enterprise) — enables ticket endpoints; gracefully skipped if not installed
-
----
+- Odoo 19.0+
+- Required modules: `mail_plugin`, `project`
+- Optional:
+  - `helpdesk` for ticket support
+  - `crm` for lead/opportunity support
 
 ## Installation
 
-### 1. Copy the module to your addons path
+```bash
+cp -r gmail_addon_search/ /path/to/odoo/addons/
+./odoo-bin -d <db> --update=base
+./odoo-bin -d <db> -i gmail_addon_search
+```
+
+To upgrade after changes:
 
 ```bash
-cp -r gmail_addon_search/ /path/to/your/odoo/addons/
+./odoo-bin -d <db> -u gmail_addon_search
 ```
-
-Or add the parent folder to your `addons_path` in `odoo.conf`.
-
-### 2. Update the module list
-
-```bash
-./odoo-bin -d <your_db> --update=base
-```
-
-Or in Odoo: **Settings > Technical > Update Apps List**.
-
-### 3. Install the module
-
-**Option A — from the Odoo Apps menu:**
-
-1. Go to **Apps**.
-2. Search for `Gmail Add-on Search & Create`.
-3. Click **Install**.
-
-**Option B — from the command line:**
-
-```bash
-./odoo-bin -d <your_db> -i gmail_addon_search
-```
-
-### 4. Verify dependencies
-
-The module automatically installs `mail_plugin` and `project`. If `helpdesk` is installed, ticket endpoints activate automatically.
-
----
-
-## Authentication
-
-All endpoints use the `mail_plugin` Bearer token flow:
-
-```
-Authorization: Bearer <odoo_api_key>
-```
-
-The API key must belong to a user with appropriate access rights to the records being searched or created.
-
-Generate API keys in Odoo: **Settings > Users > (your user) > API Keys > New**.
-
----
 
 ## Module structure
 
-```
+```text
 gmail_addon_search/
-├── __manifest__.py          ← module metadata and dependencies
-├── __init__.py
-├── controllers/
-│   └── main.py              ← HTTP controllers (all API endpoints)
-├── models/
-│   ├── gmail_email_link.py  ← Gmail ↔ Odoo record link model
-│   ├── project_task_type.py ← extends project.task.type
-│   └── helpdesk_stage.py    ← extends helpdesk.stage (loaded if helpdesk is available)
-└── views/
-    ├── project_task_type_views.xml  ← task stage form extension
-    └── helpdesk_stage_views.xml     ← helpdesk stage form extension
+├── controllers/main.py              # JSON-RPC endpoints
+├── models/gmail_addon_settings.py   # Settings + field schema/config logic
+├── models/gmail_email_link.py       # Gmail thread/message links
+├── models/gmail_document_link.py    # Docs/Sheets links
+├── models/project_task_type.py      # Task stage visibility flag
+├── models/helpdesk_stage.py         # Helpdesk stage visibility flag
+└── views/res_config_settings_views.xml
 ```
 
----
+## Notes
 
-## Upgrading
-
-When updating the module:
-
-```bash
-./odoo-bin -d <your_db> -u gmail_addon_search
-```
-
-Or in Odoo: **Apps > Gmail Add-on Search & Create > Upgrade**.
-
----
-
-## Uninstalling
-
-Uninstalling this module disables all Gmail add-on API endpoints. The Gmail add-on will show connection errors until the module is reinstalled.
-
-To uninstall: **Apps > Gmail Add-on Search & Create > Uninstall**.
-
----
-
-## Changelog
-
-### 19.0.1.4.0 — 2026-03-04
-- `email_linked_records` endpoint now returns `task_number` and `user_name` for tasks, and `ticket_ref` and `user_name` for tickets, so the add-on can display reference IDs and compose draft messages
-- `ticket_ref` and `user_id` (→ `user_name`) added to `_TICKET_FIELDS` and `_format_ticket_dict`, making them available in ticket search results and `suggest_context` recent tickets
-
-### 19.0.1.3.0 — 2026-03-03
-- Add `gmail_hide_in_search` boolean field to `project.task.type` and `helpdesk.stage`
-- Tasks/tickets whose stage has this flag enabled are excluded from all search results, `suggest_context` recent items, and stage filter dropdowns
-- View extensions add the checkbox to both stage form views in Odoo
-- Helpdesk model extension is loaded conditionally so the module remains installable without the Helpdesk module
-- Fix: correct task stage form view XML ID (`project.task_type_edit`) and helpdesk stage form view XML ID (`helpdesk.helpdesk_stage_view_form`) for Odoo 19
-- Fix: replace deprecated `type='json'` with `type='jsonrpc'` on all routes (Odoo 19)
-- Fix: add missing `author` key to module manifest
-- Fix: use `//sheet` xpath so the boolean checkbox renders correctly in stage form views
-
-### 19.0.1.2.0 — 2026-03-03
-- Fix CC follower resolution: use RFC 2822–compliant parsing (`email.utils.getaddresses`) to correctly handle `"Name <email>"` address strings
-- Partner creation now uses the display name from the CC header instead of the raw address string
-- Per-address exception handling: a single unparseable CC address no longer aborts follower subscription for the rest
-
-### 19.0.1.0.0 — 2026-02-01
-- Initial release
-- Partner detection from sender email with commercial partner resolution
-- Project/team suggestion based on partner task/ticket history
-- Task search with domain builder (project, stage, freetext)
-- Ticket search with domain builder (team, stage, freetext)
-- Task creation from email context (subject, sender, CC, body)
-- Ticket creation from email context
-- Email logging as internal note on tasks and tickets
-- Autocomplete for partners, projects, stages, helpdesk teams
-- Graceful degradation when `helpdesk` module is not installed
-- License: LGPL-3
-
----
-
-## Roadmap
-
-
+- Ticket features return safe fallback errors if Helpdesk is not installed.
+- CRM features return safe fallback errors if CRM is not installed.
+- Docs/Sheets and Chat currently use only the task/ticket parts of this module.

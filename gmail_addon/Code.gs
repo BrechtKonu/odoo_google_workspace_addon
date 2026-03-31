@@ -116,6 +116,10 @@ function apiTicketSearch_(params) {
   return odooPost_('/gmail_addon/ticket/search', params);
 }
 
+function apiLeadSearch_(params) {
+  return odooPost_('/gmail_addon/lead/search', params);
+}
+
 function apiProjectDropdown_() {
   var cache = CacheService.getUserCache();
   var key = 'dd_project_v1';
@@ -151,6 +155,26 @@ function apiTeamDropdown_() {
   return result;
 }
 
+function apiCrmTeamDropdown_() {
+  var cache = CacheService.getUserCache();
+  var key = 'dd_crm_team_v1';
+  var hit = cache.get(key);
+  if (hit) { try { return JSON.parse(hit); } catch (_) {} }
+  var result = odooPost_('/gmail_addon/crm/team/dropdown', {});
+  try { cache.put(key, JSON.stringify(result), 180); } catch (_) {}
+  return result;
+}
+
+function apiCrmStageDropdown_(teamId) {
+  var cache = CacheService.getUserCache();
+  var key = 'dd_crm_stage_v1_' + String(teamId || '');
+  var hit = cache.get(key);
+  if (hit) { try { return JSON.parse(hit); } catch (_) {} }
+  var result = odooPost_('/gmail_addon/crm/stage/dropdown', { team_id: teamId || null });
+  try { cache.put(key, JSON.stringify(result), 120); } catch (_) {}
+  return result;
+}
+
 function apiUserDropdown_() {
   var cache = CacheService.getUserCache();
   var key = 'dd_user_v1';
@@ -169,12 +193,26 @@ function apiCreatePartner_(name, email, companyName) {
   return odooPost_('/gmail_addon/partner/create', { name: name, email: email, company_name: companyName || '' });
 }
 
+function apiFormSchema_(recordType) {
+  var cache = CacheService.getUserCache();
+  var key = 'form_schema_' + String(recordType || '');
+  var hit = cache.get(key);
+  if (hit) { try { return JSON.parse(hit); } catch (_) {} }
+  var result = odooPost_('/gmail_addon/form/schema', { record_type: recordType });
+  try { cache.put(key, JSON.stringify(result), 180); } catch (_) {}
+  return result;
+}
+
 function apiCreateTask_(params) {
   return odooPost_('/gmail_addon/task/create', params);
 }
 
 function apiCreateTicket_(params) {
   return odooPost_('/gmail_addon/ticket/create', params);
+}
+
+function apiCreateLead_(params) {
+  return odooPost_('/gmail_addon/lead/create', params);
 }
 
 function apiLogEmail_(params) {
@@ -215,6 +253,106 @@ function escapeHtml_(s) {
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;');
+}
+
+function getSingleFormValue_(form, name) {
+  var value = form ? form[name] : '';
+  if (Array.isArray(value)) return value.length ? value[0] : '';
+  return value || '';
+}
+
+function getMultiFormValues_(form, name) {
+  var value = form ? form[name] : [];
+  if (value === undefined || value === null || value === '') return [];
+  return Array.isArray(value) ? value : [value];
+}
+
+function getRecordRef_(rec) {
+  if (!rec) return '';
+  return rec.reference || rec.task_number || rec.ticket_ref || rec.lead_ref || ('#' + rec.id);
+}
+
+function getRecordTypeLabel_(rec) {
+  if (!rec) return 'Record';
+  if (rec.type === 'task') return 'Task';
+  if (rec.type === 'ticket') return 'Ticket';
+  if (rec.type === 'lead') return rec.lead_type === 'opportunity' || rec.type_label === 'Opportunity'
+    ? 'Opportunity'
+    : 'Lead';
+  return 'Record';
+}
+
+function getRecordKnownIcon_(rec) {
+  if (rec && rec.type === 'task') return CardService.Icon.DESCRIPTION;
+  if (rec && rec.type === 'ticket') return CardService.Icon.CONFIRMATION_NUMBER_ICON;
+  return CardService.Icon.PERSON;
+}
+
+function addDynamicFieldWidgets_(section, schema) {
+  ((schema && schema.extra_fields) || []).forEach(function(field) {
+    var fieldName = 'extra__' + field.name;
+    var requiredSuffix = field.required ? ' *' : '';
+    if (field.type === 'selection' || field.type === 'many2one') {
+      section.addWidget(CardService.newTextParagraph().setText((field.label || field.name) + requiredSuffix));
+      var dropdown = CardService.newSelectionInput()
+        .setType(CardService.SelectionInputType.DROPDOWN)
+        .setFieldName(fieldName)
+        .addItem('Select...', '', !field.required);
+      (field.options || []).forEach(function(option) {
+        dropdown.addItem(option.label, String(option.value), false);
+      });
+      section.addWidget(dropdown);
+      return;
+    }
+
+    if (field.type === 'many2many') {
+      section.addWidget(CardService.newTextParagraph().setText((field.label || field.name) + requiredSuffix));
+      var multi = CardService.newSelectionInput()
+        .setType(CardService.SelectionInputType.CHECK_BOX)
+        .setFieldName(fieldName);
+      (field.options || []).forEach(function(option) {
+        multi.addItem(option.label, String(option.value), false);
+      });
+      section.addWidget(multi);
+      return;
+    }
+
+    if (field.type === 'boolean') {
+      section.addWidget(CardService.newTextParagraph().setText(field.label || field.name));
+      section.addWidget(CardService.newSelectionInput()
+        .setType(CardService.SelectionInputType.CHECK_BOX)
+        .setFieldName(fieldName)
+        .addItem(field.label || field.name, 'true', false)
+      );
+      return;
+    }
+
+    section.addWidget(CardService.newTextInput()
+      .setFieldName(fieldName)
+      .setTitle((field.label || field.name) + requiredSuffix)
+      .setMultiline(field.type === 'text' || field.type === 'html')
+      .setHint(field.help || '')
+    );
+  });
+}
+
+function extractDynamicFieldValues_(form, schema) {
+  var extraValues = {};
+  ((schema && schema.extra_fields) || []).forEach(function(field) {
+    var fieldName = 'extra__' + field.name;
+    if (field.type === 'many2many') {
+      var manyValues = getMultiFormValues_(form, fieldName);
+      if (manyValues.length) extraValues[field.name] = manyValues;
+      return;
+    }
+    if (field.type === 'boolean') {
+      extraValues[field.name] = getMultiFormValues_(form, fieldName).indexOf('true') >= 0;
+      return;
+    }
+    var value = getSingleFormValue_(form, fieldName);
+    if (value !== '') extraValues[field.name] = value;
+  });
+  return extraValues;
 }
 
 /**
@@ -572,24 +710,19 @@ function buildComposeHomeCard_(e) {
   // Linked records section — quick insert without searching
   if (linkedRecords.length > 0) {
     var linkedSection = CardService.newCardSection().setHeader('Linked to this thread');
-      linkedRecords.forEach(function(rec) {
-      var refId = rec.type === 'task'
-        ? (rec.task_number || ('#' + rec.id))
-        : (rec.ticket_ref || ('#' + rec.id));
+    linkedRecords.forEach(function(rec) {
+      var refId = getRecordRef_(rec);
       var assignee = rec.user_name ? ' · ' + rec.user_name : '';
       var refStr = refId + ' · ' + rec.name + assignee;
-      var icon = rec.type === 'task'
-        ? CardService.Icon.DESCRIPTION
-        : CardService.Icon.CONFIRMATION_NUMBER_ICON;
-        linkedSection.addWidget(CardService.newDecoratedText()
-          .setTopLabel((rec.type === 'task' ? 'Task' : 'Ticket') + ' ' + refId)
-          .setText(rec.name)
-          .setBottomLabel(rec.stage || '')
-          .setStartIcon(CardService.newIconImage().setIcon(icon))
-          .setOpenLink(CardService.newOpenLink().setUrl(rec.url))
-          .setButton(CardService.newImageButton()
-            .setIconUrl('https://www.gstatic.com/images/icons/material/system/1x/insert_link_black_18dp.png')
-            .setAltText('Insert reference at cursor')
+      linkedSection.addWidget(CardService.newDecoratedText()
+        .setTopLabel(getRecordTypeLabel_(rec) + ' ' + refId)
+        .setText(rec.name)
+        .setBottomLabel(rec.stage || '')
+        .setStartIcon(CardService.newIconImage().setIcon(getRecordKnownIcon_(rec)))
+        .setOpenLink(CardService.newOpenLink().setUrl(rec.url))
+        .setButton(CardService.newImageButton()
+          .setIconUrl('https://www.gstatic.com/images/icons/material/system/1x/insert_link_black_18dp.png')
+          .setAltText('Insert reference at cursor')
           .setOnClickAction(CardService.newAction()
             .setFunctionName('onInsertAtCursor')
             .setParameters({ reference: refStr, url: rec.url })
@@ -604,7 +737,7 @@ function buildComposeHomeCard_(e) {
   var navSection = CardService.newCardSection();
   if (linkedRecords.length === 0 && threadId) {
     navSection.addWidget(CardService.newTextParagraph()
-      .setText('No linked tasks or tickets found for this thread.')
+      .setText('No linked tasks, tickets, or leads found for this thread.')
     );
   }
   navSection.addWidget(CardService.newButtonSet()
@@ -626,6 +759,17 @@ function buildComposeHomeCard_(e) {
         .setParameters({
           compose_ctx: 'true',
           suggested_team_id: suggestedTeamId,
+          sender_email: senderEmail
+        })
+      )
+    )
+    .addButton(CardService.newTextButton()
+      .setText('Search Leads')
+      .setOnClickAction(CardService.newAction()
+        .setFunctionName('onNavigateToLeadSearch')
+        .setParameters({
+          compose_ctx: 'true',
+          suggested_team_id: String((context && context.suggested_crm_team_id) || ''),
           sender_email: senderEmail
         })
       )
@@ -775,18 +919,13 @@ function buildHomeCard_(e, overrideSenderEmail) {
   if (linkedRecords.length > 0) {
     linkedSection = CardService.newCardSection().setHeader('Linked to this email');
     linkedRecords.forEach(function(rec) {
-      var refId = rec.type === 'task'
-        ? (rec.task_number || ('#' + rec.id))
-        : (rec.ticket_ref || ('#' + rec.id));
-      var topLabel = (rec.type === 'task' ? 'Task' : 'Ticket') + ' ' + refId;
-      var icon = rec.type === 'task'
-        ? CardService.Icon.DESCRIPTION
-        : CardService.Icon.CONFIRMATION_NUMBER_ICON;
+      var refId = getRecordRef_(rec);
+      var topLabel = getRecordTypeLabel_(rec) + ' ' + refId;
       linkedSection.addWidget(CardService.newDecoratedText()
         .setTopLabel(topLabel)
         .setText(rec.name)
         .setBottomLabel(rec.stage || '')
-        .setStartIcon(CardService.newIconImage().setIcon(icon))
+        .setStartIcon(CardService.newIconImage().setIcon(getRecordKnownIcon_(rec)))
         .setOpenLink(CardService.newOpenLink().setUrl(rec.url))
       );
       var assignee = rec.user_name ? ' · ' + rec.user_name : '';
@@ -816,6 +955,17 @@ function buildHomeCard_(e, overrideSenderEmail) {
         .setFunctionName('onNavigateToTicketSearch')
         .setParameters({
           suggested_team_id: String((context && context.suggested_team_id) || ''),
+          sender_email: senderEmail,
+          sender_name: ctx.senderName || ''
+        })
+      )
+    )
+    .addButton(CardService.newTextButton()
+      .setText('Search Leads')
+      .setOnClickAction(CardService.newAction()
+        .setFunctionName('onNavigateToLeadSearch')
+        .setParameters({
+          suggested_team_id: String((context && context.suggested_crm_team_id) || ''),
           sender_email: senderEmail,
           sender_name: ctx.senderName || ''
         })
@@ -854,6 +1004,20 @@ function buildHomeCard_(e, overrideSenderEmail) {
         })
       )
     )
+    .addButton(CardService.newTextButton()
+      .setText('New Lead')
+      .setOnClickAction(CardService.newAction()
+        .setFunctionName('onNavigateToCreateLead')
+        .setParameters({
+          subject: ctx.subject || '',
+          plain_body: ctx.plainBody || '',
+          cc: ctx.cc || '',
+          sender_email: senderEmail,
+          sender_name: ctx.senderName || '',
+          suggested_team_id: String((context && context.suggested_crm_team_id) || '')
+        })
+      )
+    )
   );
 
   navSection.addWidget(CardService.newTextButton()
@@ -861,7 +1025,7 @@ function buildHomeCard_(e, overrideSenderEmail) {
     .setOnClickAction(CardService.newAction().setFunctionName('onNavigateToSettings'))
   );
 
-  // Recent tasks + tickets – merged and sorted by write_date descending.
+  // Recent records – merged and sorted by write_date descending.
   // When no email is open (no senderEmail), fetch recent records globally.
   var recentItems = [];
   var showCompany = getProps_().show_company_records === '1';
@@ -877,6 +1041,11 @@ function buildHomeCard_(e, overrideSenderEmail) {
         recentItems.push({ type: 'ticket', data: ticket, write_date: ticket.write_date || '' });
       });
     }
+    if (context.recent_leads) {
+      context.recent_leads.forEach(function(lead) {
+        recentItems.push({ type: 'lead', data: lead, write_date: lead.write_date || '' });
+      });
+    }
     if (showCompany) {
       if (context.company_tasks) {
         context.company_tasks.forEach(function(task) {
@@ -888,18 +1057,27 @@ function buildHomeCard_(e, overrideSenderEmail) {
           recentItems.push({ type: 'ticket', data: ticket, write_date: ticket.write_date || '' });
         });
       }
+      if (context.company_leads) {
+        context.company_leads.forEach(function(lead) {
+          recentItems.push({ type: 'lead', data: lead, write_date: lead.write_date || '' });
+        });
+      }
     }
   } else if (!senderEmail) {
     // No email open — fetch recent tasks and tickets in parallel
     var globalFetch = odooFetchAll_([
       { path: '/gmail_addon/task/search',   params: { limit: 5, offset: 0 } },
-      { path: '/gmail_addon/ticket/search', params: { limit: 5, offset: 0 } }
+      { path: '/gmail_addon/ticket/search', params: { limit: 5, offset: 0 } },
+      { path: '/gmail_addon/lead/search',   params: { limit: 5, offset: 0 } }
     ]);
     ((globalFetch[0] && globalFetch[0].tasks)   || []).forEach(function(task) {
       recentItems.push({ type: 'task', data: task, write_date: task.write_date || '' });
     });
     ((globalFetch[1] && globalFetch[1].tickets) || []).forEach(function(ticket) {
       recentItems.push({ type: 'ticket', data: ticket, write_date: ticket.write_date || '' });
+    });
+    ((globalFetch[2] && globalFetch[2].leads) || []).forEach(function(lead) {
+      recentItems.push({ type: 'lead', data: lead, write_date: lead.write_date || '' });
     });
   }
 
@@ -910,7 +1088,7 @@ function buildHomeCard_(e, overrideSenderEmail) {
   });
 
   var shownRecent = recentItems.slice(0, 10);
-  var recentHeader = senderEmail ? 'Recent for this contact' : 'Recent tasks & tickets';
+  var recentHeader = senderEmail ? 'Recent for this contact' : 'Recent records';
   var recentSection = CardService.newCardSection().setHeader(recentHeader);
 
   if (senderEmail) {
@@ -959,7 +1137,7 @@ function buildHomeCard_(e, overrideSenderEmail) {
           );
         }
         recentSection.addWidget(taskWidget);
-      } else {
+      } else if (item.type === 'ticket') {
         var ticket = item.data;
         var ticketWidget = CardService.newDecoratedText()
           .setTopLabel('[Ticket] ' + (ticket.ticket_ref || ('#' + ticket.id)) + ' · ' + (ticket.team_name || ''))
@@ -984,6 +1162,31 @@ function buildHomeCard_(e, overrideSenderEmail) {
           );
         }
         recentSection.addWidget(ticketWidget);
+      } else {
+        var lead = item.data;
+        var leadWidget = CardService.newDecoratedText()
+          .setTopLabel('[' + (lead.type_label || 'Lead') + '] ' + getRecordRef_(lead) + ' · ' + (lead.team_name || ''))
+          .setText(lead.name)
+          .setBottomLabel((lead.stage_name || '') + (lead.user_name ? ' · ' + lead.user_name : ''))
+          .setStartIcon(CardService.newIconImage().setIcon(CardService.Icon.PERSON))
+          .setOpenLink(CardService.newOpenLink().setUrl(lead.url));
+        if (ctx.messageId) {
+          leadWidget.setButton(CardService.newImageButton()
+            .setIconUrl('https://www.gstatic.com/images/icons/material/system/1x/comment_grey600_18dp.png')
+            .setAltText('Log email')
+            .setOnClickAction(CardService.newAction()
+              .setFunctionName('onNavigateToLogEmail')
+              .setParameters({
+                res_model: 'crm.lead',
+                res_id: String(lead.id),
+                record_name: lead.name,
+                sender_email: senderEmail,
+                subject: ctx.subject || ''
+              })
+            )
+          );
+        }
+        recentSection.addWidget(leadWidget);
       }
     });
   }
@@ -1429,7 +1632,9 @@ function onNavigateToCreateTask(e) {
 function buildTaskCreateCard_(params) {
   params = params || {};
   var projects = [];
+  var schema = { extra_fields: [] };
   try { projects = (apiProjectDropdown_().projects) || []; } catch (e) {}
+  try { schema = apiFormSchema_('task') || schema; } catch (e) {}
 
   var section = CardService.newCardSection().setHeader('New Task');
 
@@ -1476,6 +1681,8 @@ function buildTaskCreateCard_(params) {
     .setValue(params.cc || '')
   );
 
+  addDynamicFieldWidgets_(section, schema);
+
   section.addWidget(CardService.newTextButton()
     .setText('Create Task')
     .setOnClickAction(CardService.newAction()
@@ -1505,6 +1712,9 @@ function onCreateTask(e) {
       .setNotification(CardService.newNotification().setText('Project and Task Name are required.'))
       .build();
   }
+
+  var schema = { extra_fields: [] };
+  try { schema = apiFormSchema_('task') || schema; } catch (err) {}
 
   // Resolve partner by email
   var partnerId = null;
@@ -1538,6 +1748,7 @@ function onCreateTask(e) {
       partner_id: partnerId,
       description: form.description || '',
       cc_addresses: ccAddresses,
+      extra_values: extractDynamicFieldValues_(form, schema),
       email_body: emailBody,
       email_subject: name,
       author_email: partnerEmail || (params.sender_email || ''),
@@ -1874,7 +2085,9 @@ function onNavigateToCreateTicket(e) {
 function buildTicketCreateCard_(params) {
   params = params || {};
   var teams = [];
+  var schema = { extra_fields: [] };
   try { teams = (apiTeamDropdown_().teams) || []; } catch (e) {}
+  try { schema = apiFormSchema_('ticket') || schema; } catch (e) {}
 
   var section = CardService.newCardSection().setHeader('New Ticket');
 
@@ -1926,6 +2139,8 @@ function buildTicketCreateCard_(params) {
     .setValue(params.cc || '')
   );
 
+  addDynamicFieldWidgets_(section, schema);
+
   section.addWidget(CardService.newTextButton()
     .setText('Create Ticket')
     .setOnClickAction(CardService.newAction()
@@ -1955,6 +2170,9 @@ function onCreateTicket(e) {
       .setNotification(CardService.newNotification().setText('Team and Ticket Name are required.'))
       .build();
   }
+
+  var schema = { extra_fields: [] };
+  try { schema = apiFormSchema_('ticket') || schema; } catch (err) {}
 
   var partnerId = null;
   var partnerEmail = (form.partner_email || '').trim();
@@ -1988,6 +2206,7 @@ function onCreateTicket(e) {
       priority: form.priority || '1',
       description: form.description || '',
       cc_addresses: ccAddresses,
+      extra_values: extractDynamicFieldValues_(form, schema),
       email_body: emailBody,
       email_subject: name,
       author_email: partnerEmail || (params.sender_email || ''),
@@ -2033,6 +2252,492 @@ function onCreateTicket(e) {
     return CardService.newActionResponseBuilder()
       .setNavigation(CardService.newNavigation().pushCard(card))
       .setNotification(CardService.newNotification().setText('Ticket created!'))
+      .build();
+  } catch (err) {
+    return CardService.newActionResponseBuilder()
+      .setNotification(CardService.newNotification().setText('Error: ' + err.message))
+      .build();
+  }
+}
+
+// ─── LEAD SEARCH CARD ───────────────────────────────────────────────────────
+
+function onNavigateToLeadSearch(e) {
+  var p = e.parameters || {};
+  return CardService.newActionResponseBuilder()
+    .setNavigation(CardService.newNavigation().pushCard(
+      buildLeadSearchCard_({
+        suggested_team_id: p.suggested_team_id || '',
+        sender_email: p.sender_email || '',
+        sender_name: p.sender_name || '',
+        search_term: '',
+        offset: 0,
+        compose_ctx: p.compose_ctx || ''
+      })
+    ))
+    .build();
+}
+
+function buildLeadSearchCard_(params) {
+  params = params || {};
+  var offset = parseInt(params.offset) || 0;
+  var searchTerm = params.search_term || '';
+  var teamId = params.team_id || params.suggested_team_id || '';
+  var stageId = params.stage_id || '';
+  var userId = params.user_id || '';
+  var leadType = params.lead_type || 'all';
+
+  var dropdownResults = odooFetchAll_([
+    { path: '/gmail_addon/crm/team/dropdown', params: {} },
+    { path: '/gmail_addon/crm/stage/dropdown', params: { team_id: teamId || null } },
+    { path: '/gmail_addon/user/dropdown', params: {} }
+  ]);
+  var teams = (dropdownResults[0] && dropdownResults[0].teams) || [];
+  var stages = (dropdownResults[1] && dropdownResults[1].stages) || [];
+  var users = (dropdownResults[2] && dropdownResults[2].users) || [];
+
+  var formSection = CardService.newCardSection().setHeader('Search Leads');
+  formSection.addWidget(CardService.newTextInput()
+    .setFieldName('search_term')
+    .setTitle('Search')
+    .setHint('Lead, opportunity, company, email, or reference')
+    .setValue(searchTerm)
+  );
+
+  formSection.addWidget(CardService.newTextParagraph().setText('Type'));
+  formSection.addWidget(CardService.newSelectionInput()
+    .setType(CardService.SelectionInputType.DROPDOWN)
+    .setFieldName('lead_type')
+    .addItem('Both', 'all', leadType === 'all')
+    .addItem('Leads', 'lead', leadType === 'lead')
+    .addItem('Opportunities', 'opportunity', leadType === 'opportunity')
+  );
+
+  formSection.addWidget(CardService.newTextParagraph().setText('Sales Team'));
+  var teamInput = CardService.newSelectionInput()
+    .setType(CardService.SelectionInputType.DROPDOWN)
+    .setFieldName('team_id')
+    .setOnChangeAction(CardService.newAction()
+      .setFunctionName('onLeadTeamChanged')
+      .setParameters({ offset: '0', search_term: searchTerm, stage_id: '',
+                       user_id: userId, lead_type: leadType,
+                       sender_email: params.sender_email || '',
+                       sender_name: params.sender_name || '',
+                       compose_ctx: params.compose_ctx || '' })
+    )
+    .addItem('All teams', '', !teamId);
+  teams.forEach(function(team) {
+    teamInput.addItem(team.name, String(team.id), String(team.id) === String(teamId));
+  });
+  formSection.addWidget(teamInput);
+
+  formSection.addWidget(CardService.newTextParagraph().setText('Stage'));
+  var stageInput = CardService.newSelectionInput()
+    .setType(CardService.SelectionInputType.DROPDOWN)
+    .setFieldName('stage_id')
+    .addItem('All stages', '', !stageId);
+  stages.forEach(function(stage) {
+    stageInput.addItem(stage.name, String(stage.id), String(stage.id) === String(stageId));
+  });
+  formSection.addWidget(stageInput);
+
+  formSection.addWidget(CardService.newTextParagraph().setText('Assigned to'));
+  var userInput = CardService.newSelectionInput()
+    .setType(CardService.SelectionInputType.DROPDOWN)
+    .setFieldName('user_id')
+    .addItem('Anyone', '', !userId);
+  users.forEach(function(user) {
+    userInput.addItem(user.name, String(user.id), String(user.id) === String(userId));
+  });
+  formSection.addWidget(userInput);
+
+  formSection.addWidget(CardService.newButtonSet()
+    .addButton(CardService.newTextButton()
+      .setText('Search')
+      .setOnClickAction(CardService.newAction()
+        .setFunctionName('onLeadSearch')
+        .setParameters({ offset: '0', sender_email: params.sender_email || '',
+                         sender_name: params.sender_name || '',
+                         compose_ctx: params.compose_ctx || '' })
+      )
+    )
+    .addButton(CardService.newTextButton()
+      .setText('+ New Lead')
+      .setOnClickAction(CardService.newAction()
+        .setFunctionName('onNavigateToCreateLead')
+        .setParameters({
+          subject: '',
+          plain_body: '',
+          cc: '',
+          sender_email: params.sender_email || '',
+          sender_name: params.sender_name || '',
+          suggested_team_id: teamId
+        })
+      )
+    )
+  );
+
+  var cardBuilder = CardService.newCardBuilder()
+    .setHeader(CardService.newCardHeader().setTitle('Search Leads'))
+    .addSection(formSection);
+
+  if (params.error) {
+    cardBuilder.addSection(CardService.newCardSection()
+      .addWidget(CardService.newTextParagraph().setText(params.error))
+    );
+  } else if (params.results) {
+    var results = params.results;
+    var total = params.total || 0;
+    var resultsSection = CardService.newCardSection().setHeader('Results (' + total + ' found)');
+
+    if (results.length === 0) {
+      resultsSection.addWidget(CardService.newTextParagraph().setText('No leads or opportunities found.'));
+    } else {
+      results.forEach(function(lead) {
+        var leadRef = getRecordRef_(lead);
+        var assignee = lead.user_name ? ' · ' + lead.user_name : '';
+        var leadRefStr = leadRef + ' · ' + lead.name + assignee;
+        var leadWidget = CardService.newDecoratedText()
+          .setTopLabel('[' + (lead.type_label || 'Lead') + '] ' + leadRef + ' · ' + (lead.team_name || ''))
+          .setText(lead.name)
+          .setBottomLabel((lead.stage_name || '') + assignee)
+          .setOpenLink(CardService.newOpenLink().setUrl(lead.url));
+        var leadButtonSet = CardService.newButtonSet();
+        if (!params.compose_ctx) {
+          var composeAction = CardService.newAction()
+            .setFunctionName('onInsertReferenceInEmail')
+            .setParameters({ reference: leadRefStr, url: lead.url });
+          leadWidget.setButton(CardService.newImageButton()
+            .setIconUrl('https://www.gstatic.com/images/icons/material/system/1x/comment_grey600_18dp.png')
+            .setAltText('Log email')
+            .setOnClickAction(CardService.newAction()
+              .setFunctionName('onNavigateToLogEmail')
+              .setParameters({
+                res_model: 'crm.lead',
+                res_id: String(lead.id),
+                record_name: lead.name,
+                sender_email: params.sender_email || '',
+                subject: params.subject || ''
+              })
+            )
+          );
+          leadButtonSet.addButton(CardService.newImageButton()
+            .setIconUrl('https://www.gstatic.com/images/icons/material/system/1x/reply_grey600_18dp.png')
+            .setAltText('Reply with reference')
+            .setComposeAction(composeAction, CardService.ComposedEmailType.REPLY_AS_NEW_EMAIL)
+          );
+        } else {
+          leadButtonSet.addButton(CardService.newImageButton()
+            .setIconUrl('https://www.gstatic.com/images/icons/material/system/1x/insert_link_black_18dp.png')
+            .setAltText('Insert reference at cursor')
+            .setOnClickAction(CardService.newAction()
+              .setFunctionName('onInsertAtCursor')
+              .setParameters({ reference: leadRefStr, url: lead.url })
+            )
+          );
+        }
+        resultsSection.addWidget(leadWidget);
+        resultsSection.addWidget(leadButtonSet);
+        resultsSection.addWidget(CardService.newDivider());
+      });
+
+      var paginationSet = CardService.newButtonSet();
+      if (offset > 0) {
+        paginationSet.addButton(CardService.newTextButton()
+          .setText('◄ Prev')
+          .setOnClickAction(CardService.newAction()
+            .setFunctionName('onLeadSearch')
+            .setParameters({
+              offset: String(Math.max(0, offset - 10)),
+              search_term: searchTerm, team_id: teamId, stage_id: stageId, user_id: userId,
+              lead_type: leadType,
+              sender_email: params.sender_email || '',
+              sender_name: params.sender_name || '',
+              compose_ctx: params.compose_ctx || ''
+            })
+          )
+        );
+      }
+      if (offset + results.length < total) {
+        paginationSet.addButton(CardService.newTextButton()
+          .setText('Next ►')
+          .setOnClickAction(CardService.newAction()
+            .setFunctionName('onLeadSearch')
+            .setParameters({
+              offset: String(offset + 10),
+              search_term: searchTerm, team_id: teamId, stage_id: stageId, user_id: userId,
+              lead_type: leadType,
+              sender_email: params.sender_email || '',
+              sender_name: params.sender_name || '',
+              compose_ctx: params.compose_ctx || ''
+            })
+          )
+        );
+      }
+      resultsSection.addWidget(paginationSet);
+    }
+    cardBuilder.addSection(resultsSection);
+  }
+
+  return cardBuilder.build();
+}
+
+function onLeadSearch(e) {
+  var form = e.formInput || {};
+  var params = e.parameters || {};
+  var searchTerm = getSingleFormValue_(form, 'search_term') || params.search_term || '';
+  var teamId = getSingleFormValue_(form, 'team_id') || params.team_id || '';
+  var stageId = getSingleFormValue_(form, 'stage_id') || params.stage_id || '';
+  var userId = getSingleFormValue_(form, 'user_id') || params.user_id || '';
+  var leadType = getSingleFormValue_(form, 'lead_type') || params.lead_type || 'all';
+  var offset = parseInt(params.offset) || 0;
+
+  var results = [];
+  var total = 0;
+  var errorMsg = '';
+  try {
+    var data = apiLeadSearch_({
+      search_term: searchTerm,
+      lead_type: leadType,
+      team_id: teamId ? parseInt(teamId, 10) : null,
+      stage_id: stageId ? parseInt(stageId, 10) : null,
+      user_id: userId ? parseInt(userId, 10) : null,
+      limit: 10,
+      offset: offset
+    });
+    if (data.error) {
+      errorMsg = data.error;
+    } else {
+      results = data.leads || [];
+      total = data.total || 0;
+    }
+  } catch (err) {
+    errorMsg = err.message;
+  }
+
+  var card = buildLeadSearchCard_({
+    search_term: searchTerm,
+    team_id: teamId,
+    stage_id: stageId,
+    user_id: userId,
+    lead_type: leadType,
+    offset: offset,
+    results: results,
+    total: total,
+    error: errorMsg || null,
+    sender_email: params.sender_email || '',
+    sender_name: params.sender_name || '',
+    subject: params.subject || '',
+    compose_ctx: params.compose_ctx || ''
+  });
+
+  return CardService.newActionResponseBuilder()
+    .setNavigation(CardService.newNavigation().updateCard(card))
+    .build();
+}
+
+function onLeadTeamChanged(e) {
+  var form = e.formInput || {};
+  var params = e.parameters || {};
+  var teamId = getSingleFormValue_(form, 'team_id') || '';
+  return onLeadSearch(Object.assign({}, e, {
+    formInput: form,
+    parameters: Object.assign({}, params, { offset: '0', team_id: teamId, stage_id: '' })
+  }));
+}
+
+// ─── CREATE LEAD CARD ───────────────────────────────────────────────────────
+
+function onNavigateToCreateLead(e) {
+  var p = e.parameters || {};
+  return CardService.newActionResponseBuilder()
+    .setNavigation(CardService.newNavigation().pushCard(buildLeadCreateCard_(p)))
+    .build();
+}
+
+function buildLeadCreateCard_(params) {
+  params = params || {};
+  var teams = [];
+  var schema = { extra_fields: [] };
+  try { teams = (apiCrmTeamDropdown_().teams) || []; } catch (e) {}
+  try { schema = apiFormSchema_('lead') || schema; } catch (e) {}
+
+  var section = CardService.newCardSection().setHeader('New Lead');
+
+  section.addWidget(CardService.newTextParagraph().setText('Type *'));
+  section.addWidget(CardService.newSelectionInput()
+    .setType(CardService.SelectionInputType.DROPDOWN)
+    .setFieldName('lead_type')
+    .addItem('Lead', 'lead', true)
+    .addItem('Opportunity', 'opportunity', false)
+  );
+
+  section.addWidget(CardService.newTextParagraph().setText('Sales Team'));
+  var teamInput = CardService.newSelectionInput()
+    .setType(CardService.SelectionInputType.DROPDOWN)
+    .setFieldName('team_id')
+    .addItem('Use Odoo default', '', !(params.suggested_team_id || ''));
+  teams.forEach(function(team) {
+    teamInput.addItem(team.name, String(team.id), String(team.id) === String(params.suggested_team_id || ''));
+  });
+  section.addWidget(teamInput);
+
+  section.addWidget(CardService.newTextInput()
+    .setFieldName('lead_name')
+    .setTitle('Lead Name *')
+    .setValue(params.subject || '')
+  );
+
+  section.addWidget(CardService.newTextInput()
+    .setFieldName('partner_email')
+    .setTitle('Customer email')
+    .setHint('email of the customer')
+    .setValue(params.sender_email || '')
+  );
+
+  section.addWidget(CardService.newTextInput()
+    .setFieldName('contact_name')
+    .setTitle('Contact name')
+    .setValue(params.sender_name || '')
+  );
+
+  section.addWidget(CardService.newTextInput()
+    .setFieldName('company_name')
+    .setTitle('Company')
+  );
+
+  section.addWidget(CardService.newTextInput()
+    .setFieldName('description')
+    .setTitle('Description')
+    .setMultiline(true)
+    .setValue(params.plain_body || '')
+  );
+
+  section.addWidget(CardService.newTextInput()
+    .setFieldName('cc_addresses')
+    .setTitle('CC / Followers')
+    .setHint('Comma-separated emails')
+    .setValue(params.cc || '')
+  );
+
+  addDynamicFieldWidgets_(section, schema);
+
+  section.addWidget(CardService.newTextButton()
+    .setText('Create Lead')
+    .setOnClickAction(CardService.newAction()
+      .setFunctionName('onCreateLead')
+      .setParameters({
+        sender_email: params.sender_email || '',
+        sender_name: params.sender_name || ''
+      })
+    )
+  );
+
+  return CardService.newCardBuilder()
+    .setHeader(CardService.newCardHeader().setTitle('New Lead'))
+    .addSection(section)
+    .build();
+}
+
+function onCreateLead(e) {
+  var form = e.formInput || {};
+  var params = e.parameters || {};
+  var name = (getSingleFormValue_(form, 'lead_name') || '').trim();
+  var leadType = getSingleFormValue_(form, 'lead_type') || 'lead';
+  var teamId = getSingleFormValue_(form, 'team_id') || '';
+  var partnerEmail = (getSingleFormValue_(form, 'partner_email') || '').trim();
+  var contactName = (getSingleFormValue_(form, 'contact_name') || params.sender_name || '').trim();
+  var companyName = (getSingleFormValue_(form, 'company_name') || '').trim();
+  var ccAddresses = extractEmailsFromAddressList_(getSingleFormValue_(form, 'cc_addresses') || '');
+
+  if (!name) {
+    return CardService.newActionResponseBuilder()
+      .setNotification(CardService.newNotification().setText('Lead Name is required.'))
+      .build();
+  }
+
+  var schema = { extra_fields: [] };
+  try { schema = apiFormSchema_('lead') || schema; } catch (err) {}
+
+  var partnerId = null;
+  if (partnerEmail) {
+    try {
+      var matches = apiPartnerAutocomplete_(partnerEmail);
+      if (matches.partners && matches.partners.length > 0) {
+        partnerId = matches.partners[0].id;
+      }
+    } catch (err) {}
+  }
+
+  var emailBody = '';
+  var rfcMessageId = '';
+  var gmailMessageId = (e.gmail && e.gmail.messageId) || '';
+  var gmailThreadId = (e.gmail && e.gmail.threadId) || '';
+  if (gmailMessageId) {
+    try {
+      var msg = GmailApp.getMessageById(gmailMessageId);
+      emailBody = cleanEmailHtml_(msg.getBody());
+      try { rfcMessageId = msg.getHeader('Message-ID') || ''; } catch (_) {}
+    } catch (err) {}
+  }
+
+  try {
+    var result = apiCreateLead_({
+      name: name,
+      lead_type: leadType,
+      team_id: teamId ? parseInt(teamId, 10) : null,
+      partner_id: partnerId,
+      contact_name: contactName,
+      partner_name: companyName,
+      email_from: partnerEmail,
+      description: getSingleFormValue_(form, 'description') || '',
+      cc_addresses: ccAddresses,
+      extra_values: extractDynamicFieldValues_(form, schema),
+      email_body: emailBody,
+      email_subject: name,
+      author_email: partnerEmail || (params.sender_email || ''),
+      rfc_message_id: rfcMessageId,
+      gmail_message_id: gmailMessageId,
+      gmail_thread_id: gmailThreadId
+    });
+
+    if (result.error) {
+      return CardService.newActionResponseBuilder()
+        .setNotification(CardService.newNotification().setText('Error: ' + result.error))
+        .build();
+    }
+
+    var recordLabel = leadType === 'opportunity' ? 'Opportunity' : 'Lead';
+    var successSection = CardService.newCardSection()
+      .addWidget(CardService.newTextParagraph().setText(recordLabel + ' created successfully!'))
+      .addWidget(CardService.newTextButton()
+        .setText('Open ' + recordLabel + ' in Odoo')
+        .setOpenLink(CardService.newOpenLink().setUrl(result.lead_url))
+      );
+
+    if (gmailMessageId && getDriveFolderId_()) {
+      successSection.addWidget(CardService.newTextButton()
+        .setText('Log with Drive Attachments')
+        .setOnClickAction(CardService.newAction()
+          .setFunctionName('onShowDriveUploadCard_')
+          .setParameters({
+            res_model: 'crm.lead',
+            res_id: String(result.lead_id),
+            author_email: partnerEmail || (params.sender_email || ''),
+            subject: name
+          })
+        )
+      );
+    }
+
+    var card = CardService.newCardBuilder()
+      .setHeader(CardService.newCardHeader().setTitle(recordLabel + ' Created'))
+      .addSection(successSection)
+      .build();
+
+    return CardService.newActionResponseBuilder()
+      .setNavigation(CardService.newNavigation().pushCard(card))
+      .setNotification(CardService.newNotification().setText(recordLabel + ' created!'))
       .build();
   } catch (err) {
     return CardService.newActionResponseBuilder()
@@ -2249,7 +2954,7 @@ function onLogEmailWithDrive_(e) {
           year: String(now.getFullYear()),
           month: String(now.getMonth() + 1).padStart(2, '0'),
           recordId: String(parseInt(resId)),
-          recordType: resModel === 'project.task' ? 'task' : 'ticket'
+          recordType: resModel === 'project.task' ? 'task' : (resModel === 'helpdesk.ticket' ? 'ticket' : 'lead')
         });
       } catch (_) {}
     }

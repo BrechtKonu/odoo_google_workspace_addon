@@ -9,6 +9,8 @@ class GmailEmailLink(models.Model):
     rfc_message_id = fields.Char(index=True)         # RFC 5322 Message-ID (legacy)
     gmail_message_id = fields.Char(index=True)       # Gmail internal message ID
     gmail_thread_id = fields.Char(index=True)        # Gmail thread ID
+    outlook_item_id = fields.Char(index=True)        # Outlook item identifier
+    outlook_conversation_id = fields.Char(index=True)  # Outlook conversation ID
     res_model = fields.Char(required=True, index=True)  # 'project.task' or 'helpdesk.ticket'
     res_id = fields.Integer(required=True, index=True)
     record_name = fields.Char()  # cached display name
@@ -51,6 +53,8 @@ class GmailEmailLink(models.Model):
                     'rfc_message_id': msgid,
                     'gmail_message_id': '',
                     'gmail_thread_id': '',
+                    'outlook_item_id': '',
+                    'outlook_conversation_id': '',
                     'res_model': model,
                     'res_id': res_id,
                     'record_name': row.get('record_name') or '',
