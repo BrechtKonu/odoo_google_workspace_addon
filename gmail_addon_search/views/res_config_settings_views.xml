@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="res_config_settings_view_form_gmail_addon" model="ir.ui.view">
+        <field name="name">res.config.settings.view.form.gmail.addon</field>
+        <field name="model">res.config.settings</field>
+        <field name="inherit_id" ref="base_setup.res_config_settings_view_form"/>
+        <field name="arch" type="xml">
+            <xpath expr="//form" position="inside">
+                <app string="Google Workspace Add-on" name="gmail_addon_search">
+                    <block title="Outlook Add-in">
+                        <setting string="Outlook manifest download" help="Download the Outlook manifest with URLs generated from this Odoo base URL. Install that file in Outlook Web or New Outlook.">
+                            <field name="gmail_outlook_manifest_url" widget="url" readonly="1"/>
+                        </setting>
+                    </block>
+                    <block title="Task and Ticket Display">
+                        <setting string="Task reference field">
+                            <field name="gmail_task_reference_field_id"/>
+                        </setting>
+                        <setting string="Ticket reference field">
+                            <field name="gmail_ticket_reference_field_id"/>
+                        </setting>
+                        <setting string="Lead reference field">
+                            <field name="gmail_lead_reference_field_id"/>
+                        </setting>
+                    </block>
+                    <block title="Extra Create Fields">
+                        <setting string="Task extra fields">
+                            <field name="gmail_task_extra_field_ids" widget="many2many_tags"/>
+                        </setting>
+                        <setting string="Ticket extra fields">
+                            <field name="gmail_ticket_extra_field_ids" widget="many2many_tags"/>
+                        </setting>
+                        <setting string="Lead extra fields">
+                            <field name="gmail_lead_extra_field_ids" widget="many2many_tags"/>
+                        </setting>
+                    </block>
+                </app>
+            </xpath>
+        </field>
+    </record>
+</odoo>

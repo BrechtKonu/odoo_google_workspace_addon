@@ -20,6 +20,7 @@ Helpdesk support is optional and gracefully degraded when not installed.
         'security/ir.model.access.csv',
         'data/ir_cron.xml',
         'data/server_actions.xml',
+        'views/res_config_settings_views.xml',
         'views/project_task_type_views.xml',
         'views/helpdesk_stage_views.xml',
     ],
