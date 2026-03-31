@@ -1,0 +1,3 @@
+id,name,model_id:id,group_id:id,perm_read,perm_write,perm_create,perm_unlink
+access_gmail_email_link_user,gmail.email.link user,model_gmail_email_link,base.group_user,1,1,1,0
+access_gmail_document_link_user,gmail.document.link user,model_gmail_document_link,base.group_user,1,1,1,0

@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="view_helpdesk_stage_form_gmail_hide" model="ir.ui.view">
+        <field name="name">helpdesk.stage.form.gmail.hide</field>
+        <field name="model">helpdesk.stage</field>
+        <field name="inherit_id" ref="helpdesk.helpdesk_stage_view_form"/>
+        <field name="arch" type="xml">
+            <xpath expr="//sheet" position="inside">
+                <group string="Gmail Add-on">
+                    <field name="gmail_hide_in_search"/>
+                </group>
+            </xpath>
+        </field>
+    </record>
+</odoo>

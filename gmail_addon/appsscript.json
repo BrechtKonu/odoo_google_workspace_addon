@@ -1,0 +1,69 @@
+{
+  "timeZone": "Europe/Brussels",
+  "runtimeVersion": "V8",
+  "exceptionLogging": "STACKDRIVER",
+  "oauthScopes": [
+    "https://www.googleapis.com/auth/gmail.addons.execute",
+    "https://www.googleapis.com/auth/gmail.addons.current.message.readonly",
+    "https://www.googleapis.com/auth/gmail.addons.current.action.compose",
+    "https://www.googleapis.com/auth/gmail.addons.current.message.metadata",
+    "https://www.googleapis.com/auth/script.external_request",
+    "https://www.googleapis.com/auth/gmail.readonly",
+    "https://www.googleapis.com/auth/gmail.compose",
+    "https://www.googleapis.com/auth/documents.currentonly",
+    "https://www.googleapis.com/auth/spreadsheets.currentonly",
+    "https://www.googleapis.com/auth/drive",
+    "https://www.googleapis.com/auth/script.locale",
+    "https://www.googleapis.com/auth/chat.messages.create"
+  ],
+  "urlFetchWhitelist": [
+    "https://*.odoo.com/",
+    "https://*.konu.be/",
+    "https://*.konu.care/",
+    "https://*.googleusercontent.com/",
+    "https://*.google.com/",
+    "https://*.googleapis.com/"
+  ],
+  "addOns": {
+    "common": {
+      "name": "Konu Tasks & Tickets",
+      "logoUrl": "https://www.konu.be/favicon.ico",
+      "useLocaleFromApp": true,
+      "homepageTrigger": {
+        "runFunction": "onChatMessageOpen"
+      }
+    },
+    "gmail": {
+      "homepageTrigger": {
+        "runFunction": "onGmailMessageOpen"
+      },
+      "contextualTriggers": [
+        {
+          "unconditional": {},
+          "onTriggerFunction": "onGmailMessageOpen"
+        }
+      ],
+      "composeTrigger": {
+        "actions": [
+          {
+            "runFunction": "onGmailCompose"
+          }
+        ],
+        "draftAccess": "METADATA"
+      },
+      "primaryColor": "#0d4345",
+      "secondaryColor": "#FFFFFF"
+    },
+    "docs": {
+      "homepageTrigger": {
+        "runFunction": "onDocsOpen"
+      }
+    },
+    "sheets": {
+      "homepageTrigger": {
+        "runFunction": "onSheetsOpen"
+      }
+    },
+    "chat": {}
+  }
+}

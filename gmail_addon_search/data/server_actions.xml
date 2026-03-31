@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+
+    <record id="action_backfill_gmail_email_links" model="ir.actions.server">
+        <field name="name">Backfill Gmail Email Links</field>
+        <field name="model_id" ref="gmail_addon_search.model_gmail_email_link"/>
+        <field name="binding_model_id" ref="gmail_addon_search.model_gmail_email_link"/>
+        <field name="binding_type">action</field>
+        <field name="state">code</field>
+        <field name="code">
+result = env['gmail.email.link'].backfill_from_mail_messages(limit=5000)
+env['bus.bus']._sendone(env.user.partner_id, 'simple_notification', {
+    'title': 'Backfill complete',
+    'message': 'Processed %s mail messages, created %s new links.' % (result['processed'], result['created']),
+    'type': 'success',
+})
+        </field>
+    </record>
+
+</odoo>
