@@ -322,6 +322,14 @@ function apiRecordLinks_(resModel, resId) {
   });
 }
 
+/** Compact single-record fetch for Google Chat link unfurling. */
+function apiRecordPreview_(resModel, resId) {
+  return odooPost_('/gmail_addon/record/preview', {
+    res_model: resModel || '',
+    res_id: resId || 0
+  });
+}
+
 // ─── COMPOSE ACTION HELPERS ──────────────────────────────────────────────────
 
 /** Minimal HTML escaping for inline text and attribute values. */
@@ -470,8 +478,8 @@ function onInsertReferenceInEmail(e) {
   var url = params.url;
   var safeUrl = escapeHtml_(url);
   var chipHtml =
-    '<p><a href="' + safeUrl + '" style="background:#e8f0fe;border-radius:12px;' +
-    'color:#1a73e8;display:inline-block;font-family:Google Sans,Roboto,sans-serif;' +
+    '<p><a href="' + safeUrl + '" style="background:#0D4345;border-radius:12px;' +
+    'color:#FFFFFF;display:inline-block;font-family:Mulish,Arial,sans-serif;' +
     'font-size:13px;font-weight:500;padding:3px 10px;text-decoration:none;">' +
     escapeHtml_(reference) + '</a></p><p><br></p>';
   var messageId = e.gmail && e.gmail.messageId;
@@ -489,8 +497,8 @@ function onInsertAtCursor(e) {
   var params = e.parameters;
   var safeUrl = escapeHtml_(params.url);
   var chipHtml =
-    '<p><a href="' + safeUrl + '" style="background:#e8f0fe;border-radius:12px;' +
-    'color:#1a73e8;display:inline-block;font-family:Google Sans,Roboto,sans-serif;' +
+    '<p><a href="' + safeUrl + '" style="background:#0D4345;border-radius:12px;' +
+    'color:#FFFFFF;display:inline-block;font-family:Mulish,Arial,sans-serif;' +
     'font-size:13px;font-weight:500;padding:3px 10px;text-decoration:none;">' +
     escapeHtml_(params.reference) + '</a></p><p><br></p>';
   var updateAction = CardService.newUpdateDraftBodyAction()
@@ -568,19 +576,28 @@ function getEmailContext_(e) {
   }
 }
 
-// Clean email HTML for Odoo chatter: strip cid: images, keep external URLs
-function cleanEmailHtml_(html) {
+// Clean email HTML for Odoo chatter: strip cid: images, keep external URLs.
+// keepCids=true preserves src="cid:..." (used in Odoo-attachment mode, where
+// the controller rewrites those cid refs to /web/image URLs).
+function cleanEmailHtml_(html, keepCids) {
   if (!html) return '';
   // Remove <script> and <style> blocks
   html = html.replace(/<script[\s\S]*?<\/script>/gi, '');
   html = html.replace(/<style[\s\S]*?<\/style>/gi, '');
-  // Replace cid: images with placeholder
-  html = html.replace(/src=["']cid:[^"']*["']/gi, 'src="" alt="[embedded image]"');
+  // Replace cid: images with placeholder (unless we are rehosting them)
+  if (!keepCids) {
+    html = html.replace(/src=["']cid:[^"']*["']/gi, 'src="" alt="[embedded image]"');
+  }
   // Strip base64 inline images (too large for JSON)
   html = html.replace(/src=["']data:image[^"']*["']/gi, 'src="" alt="[inline image]"');
   // Strip tracking pixels: <img> tags that are 1x1 or have width/height=1
   html = html.replace(/<img[^>]*(width=["']?1["']?|height=["']?1["']?)[^>]*>/gi, '');
   return html;
+}
+
+// Escape a string for safe use inside a RegExp.
+function escapeRegExp_(s) {
+  return String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 // ─── LOGIN CARD ──────────────────────────────────────────────────────────────
@@ -612,7 +629,7 @@ function buildLoginCard_() {
 
   if (!getDriveFolderId_()) {
     section.addWidget(CardService.newDecoratedText()
-      .setText('⚠️ No Drive folder ID set — attachments will not be saved.')
+      .setText('<font color="#DD5C4E">No Drive folder ID set — attachments will not be saved.</font>')
     );
   }
 
@@ -628,7 +645,7 @@ function buildLoginCard_() {
 
   if (authStatus === ScriptApp.AuthorizationStatus.REQUIRED) {
     authSection.addWidget(CardService.newDecoratedText()
-      .setText('⚠️ Some Google permissions are missing or revoked.')
+      .setText('<font color="#DD5C4E">Some Google permissions are missing or revoked.</font>')
     );
   } else {
     authSection.addWidget(CardService.newDecoratedText()
@@ -927,7 +944,7 @@ function buildHomeCard_(e, overrideSenderEmail) {
   if (_ODOO_LAST_ERROR) {
     if (_ODOO_LAST_ERROR.auth) {
       headerSection.addWidget(CardService.newDecoratedText()
-        .setText('<font color="#a50e0e">Odoo rejected the connection — your API key may be invalid or expired.</font>')
+        .setText('<font color="#DD5C4E">Odoo rejected the connection — your API key may be invalid or expired.</font>')
         .setBottomLabel('Open Settings to re-enter it')
         .setWrapText(true)
         .setStartIcon(CardService.newIconImage().setIcon(CardService.Icon.LOCK))
@@ -935,7 +952,7 @@ function buildHomeCard_(e, overrideSenderEmail) {
       );
     } else {
       headerSection.addWidget(CardService.newTextParagraph()
-        .setText('<font color="#a50e0e">Couldn\'t reach Odoo just now — some records may be missing.</font>'));
+        .setText('<font color="#DD5C4E">Couldn\'t reach Odoo just now — some records may be missing.</font>'));
     }
   }
 
@@ -3040,15 +3057,25 @@ function onConfirmLogEmail(e) {
       .build();
   }
 
-  // Get HTML body and RFC Message-ID from current email
+  // Get HTML body + inline images/attachments from the current email.
+  // Odoo-attachment mode rehosts images/files as ir.attachment on the record
+  // so inline images render in chatter and files show in the attachment list.
   var emailBody = '';
+  var attachments = [];
   var rfcMessageId = '';
   var gmailMessageId = (e.gmail && e.gmail.messageId) || '';
   var gmailThreadId = (e.gmail && e.gmail.threadId) || '';
   if (gmailMessageId) {
     try {
       var msg = GmailApp.getMessageById(gmailMessageId);
-      emailBody = cleanEmailHtml_(msg.getBody());
+      try {
+        var processed = processEmail(msg, { mode: 'odoo' });
+        emailBody = processed.emailBody;
+        attachments = processed.attachments || [];
+      } catch (procErr) {
+        console.warn('log email: rehost failed, posting plain body', procErr);
+        emailBody = cleanEmailHtml_(msg.getBody());
+      }
       try { rfcMessageId = msg.getHeader('Message-ID') || ''; } catch (_) {}
     } catch (err) {
       emailBody = '<p>(email body unavailable)</p>';
@@ -3064,7 +3091,8 @@ function onConfirmLogEmail(e) {
       author_email: senderEmail,
       rfc_message_id: rfcMessageId,
       gmail_message_id: gmailMessageId,
-      gmail_thread_id: gmailThreadId
+      gmail_thread_id: gmailThreadId,
+      attachments: attachments
     });
 
     if (result.error) {

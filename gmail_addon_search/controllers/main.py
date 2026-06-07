@@ -272,6 +272,58 @@ class GmailAddonController(http.Controller):
             _logger.warning('_sanitize_email_body: failed to sanitize body', exc_info=True)
             return ''
 
+    _MAX_ATTACH_TOTAL_BYTES = 25 * 1024 * 1024  # guard a single log payload (~25 MB)
+
+    def _attach_email_files(self, record, attachments, body):
+        """Rehost email images/files as ir.attachment on ``record``.
+
+        ``attachments`` is a list of dicts ``{name, mimetype, data, cid}`` where
+        ``data`` is base64. Each becomes an ir.attachment scoped to the record
+        (res_model/res_id) so it shows in the record's attachment list. For an
+        item carrying a ``cid`` (inline image) the matching ``src="cid:<cid>"``
+        in ``body`` is rewritten to ``/web/image/<id>?access_token=<token>`` so
+        it renders inline. The rewrite happens on the RAW body, before
+        :meth:`_sanitize_email_body`, so the sanitizer only ever sees the
+        relative ``/web/image`` URL (cid: srcs may be stripped).
+
+        Returns ``(attachment_ids, body)``. Best-effort: a malformed item is
+        logged and skipped, never raised. The caller has already confirmed the
+        user may write to ``record``, so attachments are created with the user's
+        own rights — no sudo (per the auth/ACL rule in CLAUDE.md).
+        """
+        if not attachments:
+            return [], body
+        Attachment = record.env['ir.attachment']
+        attachment_ids = []
+        total = 0
+        for item in attachments:
+            try:
+                data = (item.get('data') or '').strip()
+                if not data:
+                    continue
+                total += (len(data) * 3) // 4  # approx decoded size from base64 length
+                if total > self._MAX_ATTACH_TOTAL_BYTES:
+                    _logger.warning('attach: payload over %s bytes, skipping remaining files',
+                                    self._MAX_ATTACH_TOTAL_BYTES)
+                    break
+                att = Attachment.create({
+                    'name': item.get('name') or _('attachment'),
+                    'datas': data,
+                    'res_model': record._name,
+                    'res_id': record.id,
+                    'mimetype': item.get('mimetype') or False,
+                })
+                attachment_ids.append(att.id)
+                cid = item.get('cid')
+                if cid:
+                    token = att.generate_access_token()[0]
+                    url = '/web/image/%s?access_token=%s' % (att.id, token)
+                    body = body.replace('src="cid:%s"' % cid, 'src="%s"' % url)
+                    body = body.replace("src='cid:%s'" % cid, "src='%s'" % url)
+            except Exception:
+                _logger.exception('attach: failed to rehost %s', (item or {}).get('name'))
+        return attachment_ids, body
+
     def _contact_partner_ids(self, partner):
         commercial = partner.commercial_partner_id or partner
         return [pid for pid in {partner.id, commercial.id} if pid]
@@ -689,6 +741,46 @@ class GmailAddonController(http.Controller):
                 'record_name': link.record_name or '',
             } for link in docs],
         }
+
+    _PREVIEW_MODEL_TYPES = {
+        'project.task': 'task',
+        'helpdesk.ticket': 'ticket',
+        'crm.lead': 'lead',
+    }
+
+    @http.route('/gmail_addon/record/preview', type='jsonrpc', auth='outlook')
+    def record_preview(self, res_model='', res_id=None, **kwargs):
+        """Compact single-record fetch for Google Chat link unfurling.
+
+        Returns name / reference / stage / assignee / partner for one task,
+        ticket or lead so the Chat add-on can render a link-preview card.
+        Runs as the real user (auth='outlook'); search_read applies ACL and
+        record rules, so a record the user may not see returns
+        {'record': None} rather than leaking data.
+        """
+        rid = self._to_int(res_id)
+        record_type = self._PREVIEW_MODEL_TYPES.get(res_model)
+        if not rid or not record_type:
+            return {'record': None}
+        env = request.env
+        if res_model not in env:  # optional dependency (crm) not installed
+            return {'record': None}
+        try:
+            rows = env[res_model].search_read(
+                [('id', '=', rid)], fields=self._record_fields(record_type), limit=1)
+            if not rows:
+                return {'record': None}
+            base_url = self._get_base_url()
+            if record_type == 'task':
+                record = self._format_task_dict(rows[0], base_url, self._user_names_map(env, rows))
+            elif record_type == 'ticket':
+                record = self._format_ticket_dict(rows[0], base_url)
+            else:
+                record = self._format_lead_dict(rows[0], base_url)
+            return {'record': record, 'record_type': record_type}
+        except Exception:
+            _logger.exception('record_preview failed')
+            return {'record': None, 'error': _('Preview failed')}
 
     _DOC_LINK_MODELS = ('project.task', 'helpdesk.ticket', 'crm.lead')
 
@@ -1496,7 +1588,7 @@ class GmailAddonController(http.Controller):
     @http.route('/gmail_addon/log_email', type='jsonrpc', auth='outlook')
     def log_email(self, res_model, res_id, email_body, email_subject='',
                   author_email='', rfc_message_id='', gmail_message_id='', gmail_thread_id='',
-                  outlook_item_id='', outlook_conversation_id='', **kwargs):
+                  outlook_item_id='', outlook_conversation_id='', attachments=None, **kwargs):
         env = request.env
 
         if res_model not in ('project.task', 'helpdesk.ticket', 'crm.lead'):
@@ -1517,12 +1609,17 @@ class GmailAddonController(http.Controller):
                     [('email_normalized', '=', normalized)], limit=1
                 )
 
+            # Rehost inline images + attachments as ir.attachment on the record,
+            # rewriting cid: refs to /web/image BEFORE sanitizing the body.
+            attachment_ids, email_body = self._attach_email_files(record, attachments, email_body or '')
+
             msg = record.message_post(
                 body=Markup(self._sanitize_email_body(email_body)),
                 subject=email_subject or 'Logged from Gmail',
                 message_type='comment',
                 subtype_xmlid='mail.mt_note',
                 author_id=author.id if author else None,
+                attachment_ids=attachment_ids or None,
             )
             self._store_email_link(rfc_message_id, res_model, rid, record.display_name,
                                    gmail_message_id=gmail_message_id,

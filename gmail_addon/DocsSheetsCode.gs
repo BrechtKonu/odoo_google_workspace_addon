@@ -238,7 +238,7 @@ function buildDocsSheetsHomeCard_(e, hostHint) {
   var linkedSection = CardService.newCardSection().setHeader('Recent linked to this document');
   if (linkedError) {
     linkedSection.addWidget(CardService.newTextParagraph()
-      .setText('<font color="#a50e0e">' + escapeHtml_(linkedError) + '</font>'));
+      .setText('<font color="#DD5C4E">' + escapeHtml_(linkedError) + '</font>'));
   } else if (linkedRecords.length === 0) {
     linkedSection.addWidget(CardService.newTextParagraph().setText('No linked tasks or tickets yet.'));
   } else {
