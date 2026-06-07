@@ -5,7 +5,7 @@ from xml.sax.saxutils import escape
 
 from markupsafe import Markup
 
-from odoo import http
+from odoo import _, http
 from odoo.http import request
 from odoo.osv import expression
 from odoo.tools import html_sanitize
@@ -29,7 +29,12 @@ class GmailAddonController(http.Controller):
 
     def _get_base_url(self):
         if not hasattr(self, '_base_url_cache'):
-            self._base_url_cache = request.httprequest.url_root.rstrip('/')
+            # Prefer the trusted web.base.url config parameter over the
+            # request Host header, which is attacker-influenced and would
+            # otherwise be reflected into every returned URL and the public
+            # Outlook manifest.
+            base = request.env['ir.config_parameter'].sudo().get_param('web.base.url')
+            self._base_url_cache = (base or request.httprequest.url_root).rstrip('/')
         return self._base_url_cache
 
     def _config(self):
@@ -55,9 +60,9 @@ class GmailAddonController(http.Controller):
         if ref_domain:
             domains.append(ref_domain)
 
-        numeric = re.sub(r'[^0-9]', '', search_term or '')
-        if numeric and numeric.isdigit():
-            domains.append([('id', '=', int(numeric))])
+        term = (search_term or '').strip()
+        if term.isdigit():
+            domains.append([('id', '=', int(term))])
 
         for domain in extra_domains or []:
             if domain:
@@ -270,6 +275,23 @@ class GmailAddonController(http.Controller):
     def _contact_partner_ids(self, partner):
         commercial = partner.commercial_partner_id or partner
         return [pid for pid in {partner.id, commercial.id} if pid]
+
+    @staticmethod
+    def _to_int(value, default=None):
+        """Best-effort int coercion that never raises (returns default)."""
+        try:
+            if value in (None, '', False):
+                return default
+            return int(value)
+        except (TypeError, ValueError):
+            return default
+
+    def _clamp_limit(self, limit, default=10, maximum=200):
+        value = self._to_int(limit, default) or default
+        return max(1, min(value, maximum))
+
+    def _clamp_offset(self, offset):
+        return max(0, self._to_int(offset, 0) or 0)
 
     # ─── EMAIL LINK HELPERS ──────────────────────────────────────────────────
 
@@ -618,33 +640,64 @@ class GmailAddonController(http.Controller):
         links = env['gmail.document.link'].search(
             [('document_id', '=', document_id), ('host_app', '=', host)],
             order='write_date desc, id desc',
-            limit=int(limit or 20),
+            limit=self._clamp_limit(limit, default=20),
         )
         return {'records': self._format_linked_records(env, links)}
 
+    @http.route('/gmail_addon/record/links', type='jsonrpc', auth='outlook')
+    def record_links(self, res_model='', res_id=None, **kwargs):
+        """Reverse lookup: emails + Google docs linked to a given Odoo record."""
+        rid = self._to_int(res_id)
+        if res_model not in self._EMAIL_LINK_MODELS or not rid:
+            return {'emails': [], 'documents': []}
+        env = request.env
+        record = env[res_model].browse(rid)
+        if not record.exists():
+            return {'emails': [], 'documents': []}
+        emails = env['gmail.email.link'].search(
+            [('res_model', '=', res_model), ('res_id', '=', rid)], order='id desc')
+        docs = env['gmail.document.link'].search(
+            [('res_model', '=', res_model), ('res_id', '=', rid)], order='id desc')
+        return {
+            'emails': [{
+                'id': link.id,
+                'record_name': link.record_name or '',
+                'gmail_message_id': link.gmail_message_id or '',
+                'gmail_thread_id': link.gmail_thread_id or '',
+                'rfc_message_id': link.rfc_message_id or '',
+            } for link in emails],
+            'documents': [{
+                'id': link.id,
+                'host_app': link.host_app or '',
+                'document_id': link.document_id or '',
+                'document_title': link.document_title or '',
+                'document_url': link.document_url or '',
+                'record_name': link.record_name or '',
+            } for link in docs],
+        }
+
+    _DOC_LINK_MODELS = ('project.task', 'helpdesk.ticket', 'crm.lead')
+
     @http.route('/gmail_addon/document/link_record', type='jsonrpc', auth='outlook')
     def document_link_record(self, document_id='', host_app='', res_model='',
-                             res_id=None, record_name='', **kwargs):
+                             res_id=None, record_name='', document_title='',
+                             document_url='', **kwargs):
         host = (host_app or '').strip().lower()
         if not document_id or host not in ('docs', 'sheets'):
-            return {'error': 'Invalid document context'}
-        if res_model not in ('project.task', 'helpdesk.ticket'):
-            return {'error': 'Invalid model'}
-        if not res_id:
-            return {'error': 'Missing record id'}
+            return {'error': _('Invalid document context')}
+        if res_model not in self._DOC_LINK_MODELS:
+            return {'error': _('Invalid model')}
+        rid = self._to_int(res_id)
+        if not rid:
+            return {'error': _('Missing or invalid record id')}
 
         env = request.env
         try:
-            rid = int(res_id)
-        except Exception:
-            return {'error': 'Invalid record id'}
-
-        try:
             record = env[res_model].browse(rid)
         except Exception:
-            return {'error': 'Model unavailable'}
+            return {'error': _('Model unavailable')}
         if not record.exists():
-            return {'error': 'Record not found'}
+            return {'error': _('Record not found')}
 
         Link = env['gmail.document.link']
         domain = [
@@ -658,17 +711,145 @@ class GmailAddonController(http.Controller):
             vals = {}
             if record_name and record_name != link.record_name:
                 vals['record_name'] = record_name
+            if document_title and document_title != link.document_title:
+                vals['document_title'] = document_title
+            if document_url and document_url != link.document_url:
+                vals['document_url'] = document_url
             if vals:
                 link.write(vals)
-        else:
-            link = Link.create({
-                'document_id': document_id,
-                'host_app': host,
-                'res_model': res_model,
-                'res_id': rid,
-                'record_name': record_name or record.display_name,
-            })
+            return {'success': True, 'link_id': link.id, 'already_linked': True}
+
+        link = Link.create({
+            'document_id': document_id,
+            'host_app': host,
+            'res_model': res_model,
+            'res_id': rid,
+            'record_name': record_name or record.display_name,
+            'document_title': document_title or '',
+            'document_url': document_url or '',
+        })
+        self._post_document_link_note(record, link)
         return {'success': True, 'link_id': link.id}
+
+    def _post_document_link_note(self, record, link):
+        """Log a chatter note on the Odoo record when a Google doc is linked."""
+        if not hasattr(record, 'message_post'):
+            return
+        host_label = _('Google Sheet') if link.host_app == 'sheets' else _('Google Doc')
+        title = link.document_title or link.record_name or link.document_id
+        if link.document_url:
+            body = Markup('%s: <a href="%s" target="_blank" rel="noreferrer noopener">%s</a>') % (
+                host_label, link.document_url, title)
+        else:
+            body = Markup('%s: %s') % (host_label, title)
+        try:
+            record.message_post(
+                body=body,
+                subject=_('Linked %s', host_label),
+                message_type='comment',
+                subtype_xmlid='mail.mt_note',
+            )
+        except Exception:
+            _logger.warning('_post_document_link_note: failed for %s', link.id, exc_info=True)
+
+    # ─── LINK / UNLINK EXISTING ──────────────────────────────────────────────
+
+    _EMAIL_LINK_MODELS = ('project.task', 'helpdesk.ticket', 'crm.lead')
+
+    @http.route('/gmail_addon/email/link_record', type='jsonrpc', auth='outlook')
+    def email_link_record(self, res_model='', res_id=None, record_name='',
+                          rfc_message_id='', gmail_message_id='', gmail_thread_id='',
+                          outlook_item_id='', outlook_conversation_id='', **kwargs):
+        """Link an already-existing email to an already-existing record."""
+        if res_model not in self._EMAIL_LINK_MODELS:
+            return {'error': _('Invalid model')}
+        rid = self._to_int(res_id)
+        if not rid:
+            return {'error': _('Missing or invalid record id')}
+        if not any([rfc_message_id, gmail_message_id, gmail_thread_id,
+                    outlook_item_id, outlook_conversation_id]):
+            return {'error': _('No email identifier provided')}
+
+        env = request.env
+        record = env[res_model].browse(rid)
+        if not record.exists():
+            return {'error': _('Record not found')}
+
+        self._store_email_link(
+            rfc_message_id, res_model, rid,
+            record_name or record.display_name,
+            gmail_message_id=gmail_message_id,
+            gmail_thread_id=gmail_thread_id,
+            outlook_item_id=outlook_item_id,
+            outlook_conversation_id=outlook_conversation_id,
+        )
+        return {'success': True}
+
+    @http.route('/gmail_addon/email/unlink', type='jsonrpc', auth='outlook')
+    def email_unlink(self, link_id=None, res_model='', res_id=None,
+                     rfc_message_id='', gmail_message_id='', gmail_thread_id='',
+                     outlook_item_id='', outlook_conversation_id='', **kwargs):
+        env = request.env
+        Link = env['gmail.email.link']
+        lid = self._to_int(link_id)
+        if lid:
+            link = Link.browse(lid)
+            if not link.exists():
+                return {'error': _('Link not found')}
+            link.unlink()
+            return {'success': True, 'removed': 1}
+
+        rid = self._to_int(res_id)
+        if not res_model or not rid:
+            return {'error': _('Missing link identifier')}
+        ident = []
+        if gmail_message_id:
+            ident.append([('gmail_message_id', '=', gmail_message_id)])
+        if gmail_thread_id:
+            ident.append([('gmail_thread_id', '=', gmail_thread_id)])
+        if outlook_item_id:
+            ident.append([('outlook_item_id', '=', outlook_item_id)])
+        if outlook_conversation_id:
+            ident.append([('outlook_conversation_id', '=', outlook_conversation_id)])
+        for variant in self._rfc_message_id_variants(rfc_message_id):
+            ident.append([('rfc_message_id', '=', variant)])
+        if not ident:
+            return {'error': _('No email identifier provided')}
+        domain = expression.AND([
+            [('res_model', '=', res_model), ('res_id', '=', rid)],
+            expression.OR(ident),
+        ])
+        links = Link.search(domain)
+        count = len(links)
+        links.unlink()
+        return {'success': True, 'removed': count}
+
+    @http.route('/gmail_addon/document/unlink', type='jsonrpc', auth='outlook')
+    def document_unlink(self, link_id=None, document_id='', host_app='',
+                        res_model='', res_id=None, **kwargs):
+        env = request.env
+        Link = env['gmail.document.link']
+        lid = self._to_int(link_id)
+        if lid:
+            link = Link.browse(lid)
+            if not link.exists():
+                return {'error': _('Link not found')}
+            link.unlink()
+            return {'success': True, 'removed': 1}
+
+        host = (host_app or '').strip().lower()
+        rid = self._to_int(res_id)
+        if not document_id or host not in ('docs', 'sheets') or not res_model or not rid:
+            return {'error': _('Missing link identifier')}
+        links = Link.search([
+            ('document_id', '=', document_id),
+            ('host_app', '=', host),
+            ('res_model', '=', res_model),
+            ('res_id', '=', rid),
+        ])
+        count = len(links)
+        links.unlink()
+        return {'success': True, 'removed': count}
 
     # ─── CONTEXT SUGGESTION ──────────────────────────────────────────────────
 
@@ -873,48 +1054,57 @@ class GmailAddonController(http.Controller):
     @http.route('/gmail_addon/partner/create', type='jsonrpc', auth='outlook')
     def partner_create(self, name='', email='', company_name='', **kwargs):
         if not name or not email:
-            return {'error': 'Name and email are required'}
-        env = request.env
-        existing = self._find_partner_by_email(email)
-        if existing:
-            return {'partner_id': existing.id, 'partner_name': existing.name, 'already_exists': True}
-        vals = {'name': name.strip(), 'email': email.strip()}
-        if company_name:
-            company = env['res.partner'].sudo().search(
-                [('name', 'ilike', company_name.strip()), ('is_company', '=', True)],
-                limit=1
-            )
-            if not company:
-                company = env['res.partner'].sudo().create({
-                    'name': company_name.strip(), 'is_company': True
-                })
-            vals['parent_id'] = company.id
-        partner = env['res.partner'].sudo().create(vals)
-        base_url = self._get_base_url()
-        return {
-            'partner_id': partner.id,
-            'partner_name': partner.name,
-            'partner_url': f"{base_url}/odoo/contacts/{partner.id}",
-        }
+            return {'error': _('Name and email are required')}
+        try:
+            env = request.env
+            existing = self._find_partner_by_email(email)
+            if existing:
+                return {'partner_id': existing.id, 'partner_name': existing.name, 'already_exists': True}
+            vals = {'name': name.strip(), 'email': email.strip()}
+            if company_name:
+                company = env['res.partner'].sudo().search(
+                    [('name', 'ilike', company_name.strip()), ('is_company', '=', True)],
+                    limit=1
+                )
+                if not company:
+                    company = env['res.partner'].sudo().create({
+                        'name': company_name.strip(), 'is_company': True
+                    })
+                vals['parent_id'] = company.id
+            partner = env['res.partner'].sudo().create(vals)
+            base_url = self._get_base_url()
+            return {
+                'partner_id': partner.id,
+                'partner_name': partner.name,
+                'partner_url': f"{base_url}/odoo/contacts/{partner.id}",
+            }
+        except Exception:
+            _logger.exception('partner_create failed')
+            return {'error': _('Could not create the contact')}
 
     # ─── TASK SEARCH ─────────────────────────────────────────────────────────
 
     @http.route('/gmail_addon/task/search', type='jsonrpc', auth='outlook')
     def task_search(self, search_term='', project_id=None, stage_id=None,
                     partner_id=None, user_id=None, limit=10, offset=0, **kwargs):
-        env = request.env
-        domain = self._build_task_domain(search_term, project_id, stage_id, partner_id, user_id)
-        tasks_data = env['project.task'].search_read(
-            domain, fields=self._record_fields('task'),
-            limit=int(limit), offset=int(offset), order='write_date desc'
-        )
-        total = env['project.task'].search_count(domain)
-        base_url = self._get_base_url()
-        user_map = self._user_names_map(env, tasks_data)
-        return {
-            'tasks': [self._format_task_dict(t, base_url, user_map) for t in tasks_data],
-            'total': total,
-        }
+        try:
+            env = request.env
+            domain = self._build_task_domain(search_term, project_id, stage_id, partner_id, user_id)
+            tasks_data = env['project.task'].search_read(
+                domain, fields=self._record_fields('task'),
+                limit=self._clamp_limit(limit), offset=self._clamp_offset(offset),
+                order='write_date desc'
+            )
+            total = env['project.task'].search_count(domain)
+            base_url = self._get_base_url()
+            user_map = self._user_names_map(env, tasks_data)
+            return {
+                'tasks': [self._format_task_dict(t, base_url, user_map) for t in tasks_data],
+                'total': total,
+            }
+        except Exception:
+            _logger.exception('task_search failed')
+            return {'tasks': [], 'total': 0, 'error': _('Task search failed')}
 
     # ─── TICKET SEARCH ───────────────────────────────────────────────────────
 
@@ -941,17 +1131,22 @@ class GmailAddonController(http.Controller):
 
     @http.route('/gmail_addon/project/search', type='jsonrpc', auth='outlook')
     def project_search(self, search_term='', limit=20, **kwargs):
-        env = request.env
-        domain = [('name', 'ilike', search_term)] if search_term else []
-        projects = env['project.project'].search(domain, limit=int(limit), order='name asc')
-        return {
-            'projects': [{
-                'id': p.id,
-                'name': p.name,
-                'task_count': p.task_count,
-                'partner_name': p.partner_id.name if p.partner_id else '',
-            } for p in projects]
-        }
+        try:
+            env = request.env
+            domain = [('name', 'ilike', search_term)] if search_term else []
+            projects = env['project.project'].search(
+                domain, limit=self._clamp_limit(limit, default=20), order='name asc')
+            return {
+                'projects': [{
+                    'id': p.id,
+                    'name': p.name,
+                    'task_count': p.task_count,
+                    'partner_name': p.partner_id.name if p.partner_id else '',
+                } for p in projects]
+            }
+        except Exception:
+            _logger.exception('project_search failed')
+            return {'projects': [], 'error': _('Project search failed')}
 
     # ─── DROPDOWNS ───────────────────────────────────────────────────────────
 
@@ -963,8 +1158,9 @@ class GmailAddonController(http.Controller):
     def form_schema(self, record_type='task', **kwargs):
         try:
             return self._config().get_form_schema((record_type or 'task').strip().lower())
-        except Exception as exc:
-            return {'record_type': record_type, 'reference_field': {'name': '', 'label': 'Reference'}, 'extra_fields': [], 'error': str(exc)}
+        except Exception:
+            _logger.exception('form_schema failed for %s', record_type)
+            return {'record_type': record_type, 'reference_field': {'name': '', 'label': _('Reference')}, 'extra_fields': [], 'error': _('Could not load the form configuration')}
 
     @http.route('/gmail_addon/project/dropdown', type='jsonrpc', auth='outlook')
     def project_dropdown(self, limit=200, **kwargs):
@@ -1181,8 +1377,9 @@ class GmailAddonController(http.Controller):
                                    outlook_item_id=outlook_item_id,
                                    outlook_conversation_id=outlook_conversation_id)
             return {'ticket_id': ticket.id, 'ticket_url': self._ticket_url(ticket), 'ticket_ref': self._record_reference('ticket', ticket)}
-        except Exception as e:
-            return {'error': str(e)}
+        except Exception:
+            _logger.exception('ticket_create failed')
+            return {'error': _('Could not create the ticket')}
 
     @http.route('/gmail_addon/lead/search', type='jsonrpc', auth='outlook')
     def lead_search(self, search_term='', lead_type='all', team_id=None, stage_id=None,
@@ -1262,8 +1459,9 @@ class GmailAddonController(http.Controller):
                 'lead_url': self._lead_url(lead),
                 'lead_ref': self._record_reference('lead', lead),
             }
-        except Exception as exc:
-            return {'error': str(exc)}
+        except Exception:
+            _logger.exception('lead_create failed')
+            return {'error': _('Could not create the lead')}
 
     # ─── LOG EMAIL ───────────────────────────────────────────────────────────
 
@@ -1274,12 +1472,15 @@ class GmailAddonController(http.Controller):
         env = request.env
 
         if res_model not in ('project.task', 'helpdesk.ticket', 'crm.lead'):
-            return {'error': 'Invalid model'}
+            return {'error': _('Invalid model')}
+        rid = self._to_int(res_id)
+        if not rid:
+            return {'error': _('Missing or invalid record id')}
 
         try:
-            record = env[res_model].browse(int(res_id))
+            record = env[res_model].browse(rid)
             if not record.exists():
-                return {'error': 'Record not found'}
+                return {'error': _('Record not found')}
 
             author = None
             if author_email:
@@ -1295,12 +1496,12 @@ class GmailAddonController(http.Controller):
                 subtype_xmlid='mail.mt_note',
                 author_id=author.id if author else None,
             )
-            self._store_email_link(rfc_message_id, res_model, int(res_id), record.display_name,
+            self._store_email_link(rfc_message_id, res_model, rid, record.display_name,
                                    gmail_message_id=gmail_message_id,
                                    gmail_thread_id=gmail_thread_id,
                                    outlook_item_id=outlook_item_id,
                                    outlook_conversation_id=outlook_conversation_id)
             return {'success': True, 'message_id': msg.id}
-        except Exception as e:
+        except Exception:
             _logger.exception("log_email failed for %s/%s", res_model, res_id)
-            return {'error': str(e)}
+            return {'error': _('Could not log the email')}
