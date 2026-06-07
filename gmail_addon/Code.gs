@@ -76,15 +76,27 @@ function odooPost_(path, params) {
   return parseOdooResponse_(response, path);
 }
 
+// Last error seen by odooFetchAll_ during the current execution, so callers can
+// tell "no data" apart from "Odoo unreachable / auth expired". Reset per call.
+var _ODOO_LAST_ERROR = null;
+
 /**
  * Run multiple Odoo requests in parallel using UrlFetchApp.fetchAll.
  * Each item: { path, params }. Returns results in the same order; null on error.
+ * Sets _ODOO_LAST_ERROR ({ message, auth }) when any request fails.
  */
 function odooFetchAll_(requests) {
+  _ODOO_LAST_ERROR = null;
   var options = requests.map(function(r) { return buildOdooRequestOptions_(r.path, r.params); });
   var responses = UrlFetchApp.fetchAll(options);
   return responses.map(function(resp, i) {
-    try { return parseOdooResponse_(resp, requests[i].path); } catch (_) { return null; }
+    var code = resp.getResponseCode();
+    try {
+      return parseOdooResponse_(resp, requests[i].path);
+    } catch (err) {
+      _ODOO_LAST_ERROR = { message: String((err && err.message) || err), auth: (code === 401 || code === 403) };
+      return null;
+    }
   });
 }
 
@@ -910,6 +922,22 @@ function buildHomeCard_(e, overrideSenderEmail) {
   }
 
   var headerSection = CardService.newCardSection();
+
+  // Surface a backend/auth failure instead of silently showing "no records".
+  if (_ODOO_LAST_ERROR) {
+    if (_ODOO_LAST_ERROR.auth) {
+      headerSection.addWidget(CardService.newDecoratedText()
+        .setText('<font color="#a50e0e">Odoo rejected the connection — your API key may be invalid or expired.</font>')
+        .setBottomLabel('Open Settings to re-enter it')
+        .setWrapText(true)
+        .setStartIcon(CardService.newIconImage().setIcon(CardService.Icon.LOCK))
+        .setOnClickAction(CardService.newAction().setFunctionName('onNavigateToSettings'))
+      );
+    } else {
+      headerSection.addWidget(CardService.newTextParagraph()
+        .setText('<font color="#a50e0e">Couldn\'t reach Odoo just now — some records may be missing.</font>'));
+    }
+  }
 
   // Build participant dropdown (From + To + CC), falling back to static display when < 2 contacts.
   var fromEntry = ctx.senderEmail
