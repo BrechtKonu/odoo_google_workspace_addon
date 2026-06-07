@@ -1,6 +1,6 @@
 {
     'name': 'Google Workspace Add-on',
-    'version': '19.0.1.7.1',
+    'version': '19.0.1.7.2',
     'category': 'Productivity/Mail Plugins',
     'summary': 'Google Workspace add-on companion: search tasks/tickets, create records, log emails, cross-link docs',
     'description': """
@@ -15,9 +15,8 @@ Provides API endpoints for the Google Workspace Add-on to:
   with bi-directional visibility via smart buttons in Odoo
 
 Authentication uses the mail_plugin Bearer token (Odoo API key) flow.
-CRM (leads) support is optional and gracefully degraded when not installed.
     """,
-    'depends': ['mail_plugin', 'project', 'helpdesk'],
+    'depends': ['mail_plugin', 'project', 'helpdesk', 'crm'],
     'data': [
         'security/ir.model.access.csv',
         'security/gmail_link_rules.xml',
