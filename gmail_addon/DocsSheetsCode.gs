@@ -119,10 +119,18 @@ function getEditorContext_(e, fallbackHost) {
     }
   }
 
+  var documentUrl = '';
+  if (documentId && hostApp === 'docs') {
+    documentUrl = 'https://docs.google.com/document/d/' + documentId + '/edit';
+  } else if (documentId && hostApp === 'sheets') {
+    documentUrl = 'https://docs.google.com/spreadsheets/d/' + documentId + '/edit';
+  }
+
   return {
     hostApp: hostApp || '',
     documentId: documentId || '',
     documentTitle: documentTitle || '',
+    documentUrl: documentUrl || '',
     selectedText: selectedText || ''
   };
 }
@@ -182,7 +190,8 @@ function previewText_(text, maxLen) {
 function linkRecordToCurrentDocument_(ctx, resModel, resId, recordName) {
   if (!ctx || !ctx.documentId || !ctx.hostApp || !resModel || !resId) return;
   try {
-    apiDocumentLinkRecord_(ctx.documentId, ctx.hostApp, resModel, parseInt(resId, 10), recordName || '');
+    apiDocumentLinkRecord_(ctx.documentId, ctx.hostApp, resModel, parseInt(resId, 10),
+                           recordName || '', ctx.documentTitle || '', ctx.documentUrl || '');
   } catch (_) {}
 }
 

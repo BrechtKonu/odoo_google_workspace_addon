@@ -189,6 +189,24 @@ function apiPartnerAutocomplete_(term) {
   return odooPost_('/gmail_addon/partner/autocomplete', { search_term: term });
 }
 
+/**
+ * Choose the partner whose email exactly matches (case-insensitive) before
+ * falling back to the first fuzzy match, so a record is never silently
+ * attached to an unrelated partner that merely matched on name.
+ */
+function pickPartnerIdByEmail_(matches, email) {
+  var partners = (matches && matches.partners) || [];
+  if (!partners.length) return null;
+  var target = String(email || '').trim().toLowerCase();
+  if (target) {
+    var exact = partners.filter(function(p) {
+      return String(p.email || '').trim().toLowerCase() === target;
+    })[0];
+    if (exact) return exact.id;
+  }
+  return partners[0].id;
+}
+
 function apiCreatePartner_(name, email, companyName) {
   return odooPost_('/gmail_addon/partner/create', { name: name, email: email, company_name: companyName || '' });
 }
@@ -235,24 +253,73 @@ function apiDocumentLinkedRecords_(documentId, hostApp) {
   });
 }
 
-function apiDocumentLinkRecord_(documentId, hostApp, resModel, resId, recordName) {
+function apiDocumentLinkRecord_(documentId, hostApp, resModel, resId, recordName, documentTitle, documentUrl) {
   return odooPost_('/gmail_addon/document/link_record', {
     document_id: documentId || '',
     host_app: hostApp || '',
     res_model: resModel || '',
     res_id: resId || 0,
-    record_name: recordName || ''
+    record_name: recordName || '',
+    document_title: documentTitle || '',
+    document_url: documentUrl || ''
+  });
+}
+
+/** Link an already-existing email (current message/thread) to an existing record. */
+function apiEmailLinkRecord_(resModel, resId, recordName, ctx) {
+  ctx = ctx || {};
+  return odooPost_('/gmail_addon/email/link_record', {
+    res_model: resModel || '',
+    res_id: resId || 0,
+    record_name: recordName || '',
+    rfc_message_id: ctx.rfcMessageId || '',
+    gmail_message_id: ctx.messageId || '',
+    gmail_thread_id: ctx.threadId || ''
+  });
+}
+
+/** Remove an email link, either by link id or by record + message identifiers. */
+function apiEmailUnlink_(linkId, resModel, resId, ctx) {
+  ctx = ctx || {};
+  return odooPost_('/gmail_addon/email/unlink', {
+    link_id: linkId || null,
+    res_model: resModel || '',
+    res_id: resId || 0,
+    rfc_message_id: ctx.rfcMessageId || '',
+    gmail_message_id: ctx.messageId || '',
+    gmail_thread_id: ctx.threadId || ''
+  });
+}
+
+/** Remove a document link, either by link id or by document + record. */
+function apiDocumentUnlink_(linkId, documentId, hostApp, resModel, resId) {
+  return odooPost_('/gmail_addon/document/unlink', {
+    link_id: linkId || null,
+    document_id: documentId || '',
+    host_app: hostApp || '',
+    res_model: resModel || '',
+    res_id: resId || 0
+  });
+}
+
+/** Reverse lookup: emails + Google docs linked to a given Odoo record. */
+function apiRecordLinks_(resModel, resId) {
+  return odooPost_('/gmail_addon/record/links', {
+    res_model: resModel || '',
+    res_id: resId || 0
   });
 }
 
 // ─── COMPOSE ACTION HELPERS ──────────────────────────────────────────────────
 
-/** Minimal HTML escaping for inline text. */
+/** Minimal HTML escaping for inline text and attribute values. */
 function escapeHtml_(s) {
   return String(s)
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;');
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }
 
 function getSingleFormValue_(form, name) {
@@ -286,6 +353,15 @@ function getRecordKnownIcon_(rec) {
   if (rec && rec.type === 'task') return CardService.Icon.DESCRIPTION;
   if (rec && rec.type === 'ticket') return CardService.Icon.CONFIRMATION_NUMBER_ICON;
   return CardService.Icon.PERSON;
+}
+
+/** Map an add-on record dict (type) to its Odoo res_model. */
+function getRecordModel_(rec) {
+  if (!rec) return '';
+  if (rec.type === 'task') return 'project.task';
+  if (rec.type === 'ticket') return 'helpdesk.ticket';
+  if (rec.type === 'lead') return 'crm.lead';
+  return '';
 }
 
 function addDynamicFieldWidgets_(section, schema) {
@@ -931,7 +1007,46 @@ function buildHomeCard_(e, overrideSenderEmail) {
       var assignee = rec.user_name ? ' · ' + rec.user_name : '';
       var ref = refId + ' · ' + rec.name + assignee;
       linkedSection.addWidget(buildComposeButtons_(ref, rec.url));
+      var resModel = getRecordModel_(rec);
+      if (resModel && hasLinkedIds) {
+        var rowButtons = CardService.newButtonSet()
+          .addButton(CardService.newTextButton()
+            .setText('Log here')
+            .setOnClickAction(CardService.newAction()
+              .setFunctionName('onLogLinkedHere')
+              .setParameters({ res_model: resModel, res_id: String(rec.id),
+                               record_name: rec.name || '', sender_email: senderEmail })
+            )
+          )
+          .addButton(CardService.newTextButton()
+            .setText('Unlink')
+            .setOnClickAction(CardService.newAction()
+              .setFunctionName('onUnlinkLinked')
+              .setParameters({ res_model: resModel, res_id: String(rec.id),
+                               sender_email: senderEmail })
+            )
+          );
+        linkedSection.addWidget(rowButtons);
+      }
     });
+  }
+
+  // Paste-a-reference: type a task/ticket/lead reference and link the open email to it.
+  var pasteSection = null;
+  if (hasLinkedIds) {
+    pasteSection = CardService.newCardSection().setHeader('Link by reference');
+    pasteSection.addWidget(CardService.newTextInput()
+      .setFieldName('link_reference')
+      .setTitle('Task / ticket / lead reference')
+      .setHint('e.g. KOTASK-053 — links this email to the top match')
+    );
+    pasteSection.addWidget(CardService.newTextButton()
+      .setText('Find & link')
+      .setOnClickAction(CardService.newAction()
+        .setFunctionName('onLinkByReference')
+        .setParameters({ sender_email: senderEmail })
+      )
+    );
   }
 
   // Navigation buttons
@@ -1195,6 +1310,7 @@ function buildHomeCard_(e, overrideSenderEmail) {
     .setHeader(CardService.newCardHeader().setTitle('Odoo Tasks & Tickets'))
     .addSection(headerSection);
   if (linkedSection) cardBuilder.addSection(linkedSection);
+  if (pasteSection) cardBuilder.addSection(pasteSection);
   cardBuilder.addSection(navSection).addSection(recentSection);
   return cardBuilder.build();
 }
@@ -1231,6 +1347,97 @@ function onToggleRecentFilters(e) {
     }
   } catch (_) {}
   return CardService.newActionResponseBuilder()
+    .setNavigation(CardService.newNavigation().updateCard(buildHomeCard_(e, senderEmail)))
+    .build();
+}
+
+// ─── LINK / LOG / UNLINK ACTIONS ─────────────────────────────────────────────
+
+function _notify_(message) {
+  return CardService.newActionResponseBuilder()
+    .setNotification(CardService.newNotification().setText(message))
+    .build();
+}
+
+/** Resolve a typed reference to the top matching task, then ticket, then lead. */
+function _resolveReference_(reference) {
+  var term = String(reference || '').trim();
+  if (!term) return null;
+  var task = apiTaskSearch_({ search_term: term, limit: 1 });
+  if (task && task.tasks && task.tasks.length) {
+    return { res_model: 'project.task', id: task.tasks[0].id, name: task.tasks[0].name, ref: getRecordRef_(task.tasks[0]) };
+  }
+  var ticket = apiTicketSearch_({ search_term: term, limit: 1 });
+  if (ticket && ticket.tickets && ticket.tickets.length) {
+    return { res_model: 'helpdesk.ticket', id: ticket.tickets[0].id, name: ticket.tickets[0].name, ref: getRecordRef_(ticket.tickets[0]) };
+  }
+  var lead = apiLeadSearch_({ search_term: term, limit: 1 });
+  if (lead && lead.leads && lead.leads.length) {
+    return { res_model: 'crm.lead', id: lead.leads[0].id, name: lead.leads[0].name, ref: getRecordRef_(lead.leads[0]) };
+  }
+  return null;
+}
+
+function onLinkByReference(e) {
+  var ctx = getEmailContext_(e);
+  var senderEmail = (e.parameters && e.parameters.sender_email) || ctx.senderEmail || '';
+  var reference = (e.formInput && e.formInput.link_reference) || '';
+  if (!String(reference).trim()) return _notify_('Enter a task, ticket or lead reference first.');
+  if (!ctx.messageId && !ctx.threadId && !ctx.rfcMessageId) return _notify_('Open an email to link it.');
+
+  var match;
+  try {
+    match = _resolveReference_(reference);
+  } catch (err) {
+    return _notify_('Search failed. Check your Odoo connection.');
+  }
+  if (!match) return _notify_('No task, ticket or lead found for "' + reference + '".');
+
+  var res = apiEmailLinkRecord_(match.res_model, match.id, match.name, ctx);
+  if (res && res.error) return _notify_(res.error);
+  return CardService.newActionResponseBuilder()
+    .setNotification(CardService.newNotification().setText('Linked this email to ' + match.ref + '.'))
+    .setNavigation(CardService.newNavigation().updateCard(buildHomeCard_(e, senderEmail)))
+    .build();
+}
+
+function onLogLinkedHere(e) {
+  var ctx = getEmailContext_(e);
+  var p = e.parameters || {};
+  var senderEmail = p.sender_email || ctx.senderEmail || '';
+  if (!ctx.messageId) return _notify_('Open an email to log it.');
+  var emailBody = '';
+  try {
+    var msg = GmailApp.getMessageById(ctx.messageId);
+    emailBody = cleanEmailHtml_(msg ? msg.getBody() : '');
+  } catch (err) {
+    emailBody = ctx.plainBody || '';
+  }
+  var res = apiLogEmail_({
+    res_model: p.res_model || '',
+    res_id: p.res_id || 0,
+    email_body: emailBody,
+    email_subject: ctx.subject || '',
+    author_email: ctx.senderEmail || '',
+    rfc_message_id: ctx.rfcMessageId || '',
+    gmail_message_id: ctx.messageId || '',
+    gmail_thread_id: ctx.threadId || ''
+  });
+  if (res && res.error) return _notify_(res.error);
+  return CardService.newActionResponseBuilder()
+    .setNotification(CardService.newNotification().setText('Logged to ' + (p.record_name || 'the record') + '.'))
+    .setNavigation(CardService.newNavigation().updateCard(buildHomeCard_(e, senderEmail)))
+    .build();
+}
+
+function onUnlinkLinked(e) {
+  var ctx = getEmailContext_(e);
+  var p = e.parameters || {};
+  var senderEmail = p.sender_email || ctx.senderEmail || '';
+  var res = apiEmailUnlink_(null, p.res_model || '', p.res_id || 0, ctx);
+  if (res && res.error) return _notify_(res.error);
+  return CardService.newActionResponseBuilder()
+    .setNotification(CardService.newNotification().setText('Unlinked this email.'))
     .setNavigation(CardService.newNavigation().updateCard(buildHomeCard_(e, senderEmail)))
     .build();
 }
@@ -1722,9 +1929,7 @@ function onCreateTask(e) {
   if (partnerEmail) {
     try {
       var matches = apiPartnerAutocomplete_(partnerEmail);
-      if (matches.partners && matches.partners.length > 0) {
-        partnerId = matches.partners[0].id;
-      }
+      partnerId = pickPartnerIdByEmail_(matches, partnerEmail);
     } catch (err) {}
   }
 
@@ -2179,9 +2384,7 @@ function onCreateTicket(e) {
   if (partnerEmail) {
     try {
       var matches = apiPartnerAutocomplete_(partnerEmail);
-      if (matches.partners && matches.partners.length > 0) {
-        partnerId = matches.partners[0].id;
-      }
+      partnerId = pickPartnerIdByEmail_(matches, partnerEmail);
     } catch (err) {}
   }
 
@@ -2663,9 +2866,7 @@ function onCreateLead(e) {
   if (partnerEmail) {
     try {
       var matches = apiPartnerAutocomplete_(partnerEmail);
-      if (matches.partners && matches.partners.length > 0) {
-        partnerId = matches.partners[0].id;
-      }
+      partnerId = pickPartnerIdByEmail_(matches, partnerEmail);
     } catch (err) {}
   }
 
