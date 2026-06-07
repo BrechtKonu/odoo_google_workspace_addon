@@ -120,15 +120,12 @@ function onAppCommand(e) {
           var scopedIds = parseCsvIds_(memory.project_ids_csv);
           var projectId = memory.project_id && (!scopedIds.length || scopedIds.indexOf(memory.project_id) >= 0)
                           ? memory.project_id : '';
-          var taskData = { tasks: [], total: 0 };
-          try {
-            taskData = apiTaskSearch_({
-              search_term: argumentText,
-              project_id: projectId ? parseInt(projectId, 10) : null,
-              limit: 10, offset: 0
-            });
-            rememberSpaceRecentTasks_(spaceId, taskData.tasks || []);
-          } catch (_) {}
+          var taskData = apiTaskSearch_({
+            search_term: argumentText,
+            project_id: projectId ? parseInt(projectId, 10) : null,
+            limit: 10, offset: 0
+          });
+          try { rememberSpaceRecentTasks_(spaceId, taskData.tasks || []); } catch (_) {}
           return dialogPush_(buildChatTaskSearchCard_(spaceId, memory, {
             search_term: argumentText, project_id: projectId,
             results: taskData.tasks || [], total: taskData.total || 0,
@@ -142,15 +139,12 @@ function onAppCommand(e) {
           var scopedTeamIds = parseCsvIds_(memory.team_ids_csv);
           var teamId = memory.team_id && (!scopedTeamIds.length || scopedTeamIds.indexOf(memory.team_id) >= 0)
                        ? memory.team_id : '';
-          var ticketData = { tickets: [], total: 0 };
-          try {
-            ticketData = apiTicketSearch_({
-              search_term: argumentText,
-              team_id: teamId ? parseInt(teamId, 10) : null,
-              limit: 10, offset: 0
-            });
-            rememberSpaceRecentTickets_(spaceId, ticketData.tickets || []);
-          } catch (_) {}
+          var ticketData = apiTicketSearch_({
+            search_term: argumentText,
+            team_id: teamId ? parseInt(teamId, 10) : null,
+            limit: 10, offset: 0
+          });
+          try { rememberSpaceRecentTickets_(spaceId, ticketData.tickets || []); } catch (_) {}
           return dialogPush_(buildChatTicketSearchCard_(spaceId, memory, {
             search_term: argumentText, team_id: teamId,
             results: ticketData.tickets || [], total: ticketData.total || 0,
@@ -167,7 +161,14 @@ function onAppCommand(e) {
           argumentText ? { description: argumentText } : {}));
       default:
         console.log('onAppCommand: unrecognized cmdId=' + cmdId);
-        return dialogPush_({ sections: [{ widgets: [{ textParagraph: { text: 'Unknown command.' } }] }] });
+        return dialogPush_({ sections: [{ widgets: [{ textParagraph: { text:
+          '<b>Konu Odoo — available commands</b><br>' +
+          '/task [text] — search tasks (e.g. <i>/task KOTASK-053</i>)<br>' +
+          '/ticket [text] — search tickets<br>' +
+          '/task.create [text] — create a task<br>' +
+          '/ticket.create [text] — create a ticket<br>' +
+          '/config — set this space’s default project / team'
+        } }] }] });
     }
   } catch (err) {
     console.log('onAppCommand error:', err && err.stack ? err.stack : String(err));
@@ -327,8 +328,10 @@ function onChatConfigSave(e) {
   setSpaceMemory_(spaceId, {
     project_ids_csv: toCsvIds_(projectIds),
     team_ids_csv:    toCsvIds_(teamIds),
-    project_id: projectIds.length ? String(projectIds[0]) : '',
-    team_id:    teamIds.length    ? String(teamIds[0])    : ''
+    // Only pre-select a default filter when the scope is a single project/team;
+    // with several scoped, don't silently lock searches to the first one.
+    project_id: projectIds.length === 1 ? String(projectIds[0]) : '',
+    team_id:    teamIds.length === 1    ? String(teamIds[0])    : ''
   });
   return dialogUpdate_(buildConfigCard_(spaceId, getSpaceMemory_(spaceId), {
     project_ids: projectIds, team_ids: teamIds, info: 'Saved.'
