@@ -80,6 +80,27 @@ Create cards pre-fill the name and description from the current email. Admin-con
 
 Any result or linked record can receive the current email as an internal note. If a Drive folder is configured, images and attachments can be uploaded first and then referenced from the note body.
 
+### Chat link previews (unfurling)
+
+When someone pastes an Odoo record URL into a Chat space, the add-on unfurls it
+into a preview card (reference, name, stage, assignee, customer + an **Open in
+Odoo** button). Recognised URL shapes mirror the backend
+(`controllers/main.py`): `/odoo/all-tasks/{id}`, `/odoo/all-tickets/{id}`,
+`/odoo/project/{pid}/{tid}`, and `web#...model=crm.lead...id={id}`.
+
+Previews are **not** configured in `appsscript.json` — in the Chat add-on model
+the URL patterns and trigger callbacks live in Google Cloud Console:
+
+1. Cloud Console → **Google Chat API → Configuration → Link previews**.
+2. Add up to **5** URL patterns — host pattern for your Odoo domain(s)
+   (e.g. `*.odoo.com`, `*.konu.be`, `*.konu.care`), path prefix optional.
+3. Ensure the **message trigger** points at `onMessage` (the matched-URL branch
+   handles the preview), or bind a dedicated link-preview trigger to
+   `onChatLinkPreview`.
+
+The record is fetched via `/gmail_addon/record/preview` as the real user, so a
+record the user cannot see simply shows no preview.
+
 ## Notes
 
 - Ticket features degrade gracefully when Helpdesk is missing.

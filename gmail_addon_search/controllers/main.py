@@ -690,6 +690,46 @@ class GmailAddonController(http.Controller):
             } for link in docs],
         }
 
+    _PREVIEW_MODEL_TYPES = {
+        'project.task': 'task',
+        'helpdesk.ticket': 'ticket',
+        'crm.lead': 'lead',
+    }
+
+    @http.route('/gmail_addon/record/preview', type='jsonrpc', auth='outlook')
+    def record_preview(self, res_model='', res_id=None, **kwargs):
+        """Compact single-record fetch for Google Chat link unfurling.
+
+        Returns name / reference / stage / assignee / partner for one task,
+        ticket or lead so the Chat add-on can render a link-preview card.
+        Runs as the real user (auth='outlook'); search_read applies ACL and
+        record rules, so a record the user may not see returns
+        {'record': None} rather than leaking data.
+        """
+        rid = self._to_int(res_id)
+        record_type = self._PREVIEW_MODEL_TYPES.get(res_model)
+        if not rid or not record_type:
+            return {'record': None}
+        env = request.env
+        if res_model not in env:  # optional dependency (crm) not installed
+            return {'record': None}
+        try:
+            rows = env[res_model].search_read(
+                [('id', '=', rid)], fields=self._record_fields(record_type), limit=1)
+            if not rows:
+                return {'record': None}
+            base_url = self._get_base_url()
+            if record_type == 'task':
+                record = self._format_task_dict(rows[0], base_url, self._user_names_map(env, rows))
+            elif record_type == 'ticket':
+                record = self._format_ticket_dict(rows[0], base_url)
+            else:
+                record = self._format_lead_dict(rows[0], base_url)
+            return {'record': record, 'record_type': record_type}
+        except Exception:
+            _logger.exception('record_preview failed')
+            return {'record': None, 'error': _('Preview failed')}
+
     _DOC_LINK_MODELS = ('project.task', 'helpdesk.ticket', 'crm.lead')
 
     @http.route('/gmail_addon/document/link_record', type='jsonrpc', auth='outlook')

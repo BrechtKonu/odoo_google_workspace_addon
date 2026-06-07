@@ -322,6 +322,14 @@ function apiRecordLinks_(resModel, resId) {
   });
 }
 
+/** Compact single-record fetch for Google Chat link unfurling. */
+function apiRecordPreview_(resModel, resId) {
+  return odooPost_('/gmail_addon/record/preview', {
+    res_model: resModel || '',
+    res_id: resId || 0
+  });
+}
+
 // ─── COMPOSE ACTION HELPERS ──────────────────────────────────────────────────
 
 /** Minimal HTML escaping for inline text and attribute values. */

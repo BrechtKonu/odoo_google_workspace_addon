@@ -16,6 +16,12 @@ var CHAT_CMD_CONFIG        = 4;
 var CHAT_CMD_TASK_CREATE   = 7;
 var CHAT_CMD_TICKET_CREATE = 9;
 
+// ─── LINK PREVIEWS (unfurling) ────────────────────────────────────────────────
+// Odoo record URLs pasted in a space are unfurled into a preview card.
+// URL host patterns must ALSO be registered in Cloud Console → Chat API →
+// Configuration → Link previews (≤ 5 patterns) for Chat to send the event.
+var CHAT_PREVIEW_MODELS = ['project.task', 'helpdesk.ticket', 'crm.lead'];
+
 // ─── SPACE MEMORY ────────────────────────────────────────────────────────────
 // Per-space project/team config stored in ScriptProperties (shared across
 // all users — space is the correct shared unit).
@@ -80,11 +86,116 @@ function onAddedToSpace(e) {
  * description prefill in task/ticket create dialogs.
  */
 function onMessage(e) {
+  // A message that matches a registered link-preview URL pattern arrives on
+  // the message trigger carrying matchedUrl — unfurl it instead of replying.
+  var matchedUrl = getMatchedUrl_(e);
+  if (matchedUrl) return buildChatLinkPreviewResponse_(matchedUrl);
+
   if (!isConfigured_()) return buildLoginCard_();
   var spaceId = getSpaceId_(e);
   var spaceName = (e && e.chat && e.chat.space && e.chat.space.name) || '';
   if (spaceId !== 'default' && spaceName) setSpaceMemory_(spaceId, { space_name: spaceName });
   return buildChatHomeCard_(e);
+}
+
+/**
+ * Dedicated link-preview trigger. Wire this in Cloud Console if link previews
+ * are configured to call a function other than the message trigger; it shares
+ * all logic with the onMessage matchedUrl branch above.
+ */
+function onChatLinkPreview(e) {
+  return buildChatLinkPreviewResponse_(getMatchedUrl_(e));
+}
+
+/** Pull the link-preview matched URL out of a Chat message event, if any. */
+function getMatchedUrl_(e) {
+  var mp  = e && e.chat && e.chat.messagePayload;
+  var msg = mp && mp.message;
+  return (msg && msg.matchedUrl && msg.matchedUrl.url) || '';
+}
+
+/**
+ * Parse an Odoo record URL into {model, id}. Mirrors the URL shapes the
+ * backend emits (_task_url / _ticket_url / _lead_url in controllers/main.py):
+ *   /odoo/all-tasks/{id}        -> project.task
+ *   /odoo/all-tickets/{id}      -> helpdesk.ticket
+ *   /odoo/project/{pid}/{tid}   -> project.task (project kanban deep link)
+ *   /web#...model=crm.lead...id={id} -> crm.lead (and any other web-hash form)
+ * Returns null when nothing recognisable is found.
+ */
+function parseOdooRecordRef_(url) {
+  if (!url) return null;
+  var u = String(url);
+  var m = u.match(/\/odoo\/all-tasks\/(\d+)/);
+  if (m) return { model: 'project.task', id: parseInt(m[1], 10) };
+  m = u.match(/\/odoo\/all-tickets\/(\d+)/);
+  if (m) return { model: 'helpdesk.ticket', id: parseInt(m[1], 10) };
+  m = u.match(/\/odoo\/project\/\d+\/(\d+)/);
+  if (m) return { model: 'project.task', id: parseInt(m[1], 10) };
+  var hashIdx = u.indexOf('#');
+  if (hashIdx >= 0) {
+    var hash  = u.substring(hashIdx + 1);
+    var model = (hash.match(/[#&]?model=([\w.]+)/) || [])[1];
+    var idStr = (hash.match(/[#&]?id=(\d+)/) || [])[1];
+    if (model && idStr && CHAT_PREVIEW_MODELS.indexOf(model) >= 0) {
+      return { model: model, id: parseInt(idStr, 10) };
+    }
+  }
+  return null;
+}
+
+/**
+ * Build the inline link-preview response (cardsV2) for a pasted Odoo URL.
+ * Returns {} (no preview) when not configured, unrecognised, or the record
+ * is not visible to the user — never leaks "exists but forbidden".
+ */
+function buildChatLinkPreviewResponse_(url) {
+  if (!isConfigured_()) return {};
+  var ref = parseOdooRecordRef_(url);
+  if (!ref) return {};
+
+  var rec;
+  try {
+    var resp = apiRecordPreview_(ref.model, ref.id);
+    rec = resp && resp.record;
+  } catch (err) {
+    console.log('link preview fetch failed:', err && err.message ? err.message : String(err));
+    return {};
+  }
+  if (!rec) return {};
+
+  var typeLabel = ref.model === 'helpdesk.ticket' ? 'Ticket'
+                : ref.model === 'crm.lead'        ? (rec.type_label || 'Lead')
+                :                                   'Task';
+  var title = rec.reference ? (typeLabel + ' ' + rec.reference) : typeLabel;
+
+  var widgets = [];
+  if (rec.stage_name)   widgets.push({ decoratedText: { topLabel: 'Stage',    text: escapeHtml_(rec.stage_name) } });
+  if (rec.user_name)    widgets.push({ decoratedText: { topLabel: 'Assignee', text: escapeHtml_(rec.user_name) } });
+  if (rec.partner_name) widgets.push({ decoratedText: { topLabel: 'Customer', text: escapeHtml_(rec.partner_name) } });
+  var context = rec.project_name || rec.team_name || '';
+  if (context) {
+    widgets.push({ decoratedText: {
+      topLabel: ref.model === 'project.task' ? 'Project' : 'Team',
+      text: escapeHtml_(context)
+    }});
+  }
+  widgets.push({ buttonList: { buttons: [{
+    text: 'Open in Odoo',
+    onClick: { openLink: { url: rec.url || url } }
+  }]}});
+
+  return {
+    hostAppDataAction: { chatDataAction: { updateInlinePreviewAction: {
+      cardsV2: [{
+        cardId: 'konuOdooPreview',
+        card: {
+          header: { title: title, subtitle: rec.name || '' },
+          sections: [{ widgets: widgets }]
+        }
+      }]
+    }}}
+  };
 }
 
 /**
