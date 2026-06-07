@@ -470,8 +470,8 @@ function onInsertReferenceInEmail(e) {
   var url = params.url;
   var safeUrl = escapeHtml_(url);
   var chipHtml =
-    '<p><a href="' + safeUrl + '" style="background:#e8f0fe;border-radius:12px;' +
-    'color:#1a73e8;display:inline-block;font-family:Google Sans,Roboto,sans-serif;' +
+    '<p><a href="' + safeUrl + '" style="background:#0D4345;border-radius:12px;' +
+    'color:#FFFFFF;display:inline-block;font-family:Mulish,Arial,sans-serif;' +
     'font-size:13px;font-weight:500;padding:3px 10px;text-decoration:none;">' +
     escapeHtml_(reference) + '</a></p><p><br></p>';
   var messageId = e.gmail && e.gmail.messageId;
@@ -489,8 +489,8 @@ function onInsertAtCursor(e) {
   var params = e.parameters;
   var safeUrl = escapeHtml_(params.url);
   var chipHtml =
-    '<p><a href="' + safeUrl + '" style="background:#e8f0fe;border-radius:12px;' +
-    'color:#1a73e8;display:inline-block;font-family:Google Sans,Roboto,sans-serif;' +
+    '<p><a href="' + safeUrl + '" style="background:#0D4345;border-radius:12px;' +
+    'color:#FFFFFF;display:inline-block;font-family:Mulish,Arial,sans-serif;' +
     'font-size:13px;font-weight:500;padding:3px 10px;text-decoration:none;">' +
     escapeHtml_(params.reference) + '</a></p><p><br></p>';
   var updateAction = CardService.newUpdateDraftBodyAction()
@@ -612,7 +612,7 @@ function buildLoginCard_() {
 
   if (!getDriveFolderId_()) {
     section.addWidget(CardService.newDecoratedText()
-      .setText('⚠️ No Drive folder ID set — attachments will not be saved.')
+      .setText('<font color="#DD5C4E">No Drive folder ID set — attachments will not be saved.</font>')
     );
   }
 
@@ -628,7 +628,7 @@ function buildLoginCard_() {
 
   if (authStatus === ScriptApp.AuthorizationStatus.REQUIRED) {
     authSection.addWidget(CardService.newDecoratedText()
-      .setText('⚠️ Some Google permissions are missing or revoked.')
+      .setText('<font color="#DD5C4E">Some Google permissions are missing or revoked.</font>')
     );
   } else {
     authSection.addWidget(CardService.newDecoratedText()
@@ -927,7 +927,7 @@ function buildHomeCard_(e, overrideSenderEmail) {
   if (_ODOO_LAST_ERROR) {
     if (_ODOO_LAST_ERROR.auth) {
       headerSection.addWidget(CardService.newDecoratedText()
-        .setText('<font color="#a50e0e">Odoo rejected the connection — your API key may be invalid or expired.</font>')
+        .setText('<font color="#DD5C4E">Odoo rejected the connection — your API key may be invalid or expired.</font>')
         .setBottomLabel('Open Settings to re-enter it')
         .setWrapText(true)
         .setStartIcon(CardService.newIconImage().setIcon(CardService.Icon.LOCK))
@@ -935,7 +935,7 @@ function buildHomeCard_(e, overrideSenderEmail) {
       );
     } else {
       headerSection.addWidget(CardService.newTextParagraph()
-        .setText('<font color="#a50e0e">Couldn\'t reach Odoo just now — some records may be missing.</font>'));
+        .setText('<font color="#DD5C4E">Couldn\'t reach Odoo just now — some records may be missing.</font>'));
     }
   }
 
