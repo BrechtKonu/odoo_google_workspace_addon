@@ -576,19 +576,28 @@ function getEmailContext_(e) {
   }
 }
 
-// Clean email HTML for Odoo chatter: strip cid: images, keep external URLs
-function cleanEmailHtml_(html) {
+// Clean email HTML for Odoo chatter: strip cid: images, keep external URLs.
+// keepCids=true preserves src="cid:..." (used in Odoo-attachment mode, where
+// the controller rewrites those cid refs to /web/image URLs).
+function cleanEmailHtml_(html, keepCids) {
   if (!html) return '';
   // Remove <script> and <style> blocks
   html = html.replace(/<script[\s\S]*?<\/script>/gi, '');
   html = html.replace(/<style[\s\S]*?<\/style>/gi, '');
-  // Replace cid: images with placeholder
-  html = html.replace(/src=["']cid:[^"']*["']/gi, 'src="" alt="[embedded image]"');
+  // Replace cid: images with placeholder (unless we are rehosting them)
+  if (!keepCids) {
+    html = html.replace(/src=["']cid:[^"']*["']/gi, 'src="" alt="[embedded image]"');
+  }
   // Strip base64 inline images (too large for JSON)
   html = html.replace(/src=["']data:image[^"']*["']/gi, 'src="" alt="[inline image]"');
   // Strip tracking pixels: <img> tags that are 1x1 or have width/height=1
   html = html.replace(/<img[^>]*(width=["']?1["']?|height=["']?1["']?)[^>]*>/gi, '');
   return html;
+}
+
+// Escape a string for safe use inside a RegExp.
+function escapeRegExp_(s) {
+  return String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 // ─── LOGIN CARD ──────────────────────────────────────────────────────────────
@@ -3048,15 +3057,25 @@ function onConfirmLogEmail(e) {
       .build();
   }
 
-  // Get HTML body and RFC Message-ID from current email
+  // Get HTML body + inline images/attachments from the current email.
+  // Odoo-attachment mode rehosts images/files as ir.attachment on the record
+  // so inline images render in chatter and files show in the attachment list.
   var emailBody = '';
+  var attachments = [];
   var rfcMessageId = '';
   var gmailMessageId = (e.gmail && e.gmail.messageId) || '';
   var gmailThreadId = (e.gmail && e.gmail.threadId) || '';
   if (gmailMessageId) {
     try {
       var msg = GmailApp.getMessageById(gmailMessageId);
-      emailBody = cleanEmailHtml_(msg.getBody());
+      try {
+        var processed = processEmail(msg, { mode: 'odoo' });
+        emailBody = processed.emailBody;
+        attachments = processed.attachments || [];
+      } catch (procErr) {
+        console.warn('log email: rehost failed, posting plain body', procErr);
+        emailBody = cleanEmailHtml_(msg.getBody());
+      }
       try { rfcMessageId = msg.getHeader('Message-ID') || ''; } catch (_) {}
     } catch (err) {
       emailBody = '<p>(email body unavailable)</p>';
@@ -3072,7 +3091,8 @@ function onConfirmLogEmail(e) {
       author_email: senderEmail,
       rfc_message_id: rfcMessageId,
       gmail_message_id: gmailMessageId,
-      gmail_thread_id: gmailThreadId
+      gmail_thread_id: gmailThreadId,
+      attachments: attachments
     });
 
     if (result.error) {

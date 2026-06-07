@@ -78,7 +78,9 @@ Create cards pre-fill the name and description from the current email. Admin-con
 
 ### Log email
 
-Any result or linked record can receive the current email as an internal note. If a Drive folder is configured, images and attachments can be uploaded first and then referenced from the note body.
+Any result or linked record can receive the current email as an internal note. Inline images and attachments are **rehosted as Odoo `ir.attachment`** on the record: inline images render in the chatter note (served via `/web/image/<id>?access_token=`) and all files appear in the record's attachment list — no dependency on Google Drive public sharing. A total-payload size guard (~25 MB) skips oversized files.
+
+A separate "Log with Drive Attachments" action still uploads to a configured Google Drive folder instead, for teams that prefer Drive-backed storage.
 
 ### Chat link previews (unfurling)
 

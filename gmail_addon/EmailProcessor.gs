@@ -157,6 +157,17 @@ function processEmail(msg, options) {
     });
   }
 
+  // ── Odoo-attachment mode ────────────────────────────────────────────────
+  // Instead of uploading to Drive, return the fetched bytes (base64) so the
+  // Odoo controller can rehost them as ir.attachment on the record. Inline
+  // images keep a cid sentinel in the body for the controller to rewrite.
+  if (opts.mode === 'odoo') {
+    return collectOdooAttachments_(
+      html, cidRefs, cidInlineBlobs, cidAttachBlobs,
+      gmailImgItems, phase1Responses, gmailImgStartIdx, msg, attachmentFilter
+    );
+  }
+
   // ── Phase 3: Drive uploads ──────────────────────────────────────────────
 
   var fileIds = [];
@@ -246,6 +257,83 @@ function processEmail(msg, options) {
     fileIds: fileIds,
     originalNames: originalNames
   };
+}
+
+/**
+ * Builds the Odoo-attachment payload for processEmail's 'odoo' mode.
+ * Returns { emailBody, attachments } where attachments is a list of
+ * { name, mimetype, data (base64), cid } — cid set for inline images
+ * (matched against a src="cid:konu-img-N" sentinel in the body), null for
+ * file attachments. No Drive upload happens in this mode.
+ */
+function collectOdooAttachments_(html, cidRefs, cidInlineBlobs, cidAttachBlobs,
+                                 gmailImgItems, phase1Responses, gmailImgStartIdx, msg, attachmentFilter) {
+  var attachments = [];
+  var body = html;
+  var imgIndex = 0;
+
+  function pushImage_(blob, konuCid) {
+    var ct = blob.getContentType() || 'image/png';
+    var ext = (ct.split('/')[1] || 'png').split(';')[0];
+    attachments.push({
+      name: 'image_' + (imgIndex + 1) + '.' + ext,
+      mimetype: ct,
+      data: Utilities.base64Encode(blob.getBytes()),
+      cid: konuCid
+    });
+  }
+
+  // Inline CID images — rewrite src="cid:<raw>" (raw may carry @domain) to a
+  // stable sentinel the controller recognises.
+  cidRefs.forEach(function(cid) {
+    var blob = cidInlineBlobs[cid] || cidAttachBlobs[cid];
+    if (!blob) return;
+    var konuCid = 'konu-img-' + imgIndex;
+    try {
+      pushImage_(blob, konuCid);
+      var re = new RegExp('src=["\']cid:' + escapeRegExp_(cid) + '[^"\']*["\']', 'gi');
+      body = body.replace(re, 'src="cid:' + konuCid + '"');
+      imgIndex++;
+    } catch (e) {
+      console.error('collectOdooAttachments_: CID image error', cid, e);
+    }
+  });
+
+  // Inline Gmail-URL images — fetched in phase 1.
+  gmailImgItems.forEach(function(item, idx) {
+    var resp = phase1Responses[gmailImgStartIdx + idx];
+    if (!resp || resp.getResponseCode() !== 200) return;
+    var konuCid = 'konu-img-' + imgIndex;
+    try {
+      pushImage_(resp.getBlob(), konuCid);
+      body = body.split('src="' + item.src + '"').join('src="cid:' + konuCid + '"');
+      imgIndex++;
+    } catch (e) {
+      console.error('collectOdooAttachments_: Gmail image error', idx, e);
+    }
+  });
+
+  // File attachments (filtered by selection if attachmentFilter is set).
+  try {
+    msg.getAttachments().forEach(function(att, idx) {
+      if (attachmentFilter !== null && attachmentFilter.indexOf(idx) === -1) return;
+      try {
+        var blob = att.copyBlob();
+        attachments.push({
+          name: att.getName() || ('attachment_' + idx),
+          mimetype: blob.getContentType() || '',
+          data: Utilities.base64Encode(blob.getBytes()),
+          cid: null
+        });
+      } catch (e) {
+        console.error('collectOdooAttachments_: attachment error', idx, e);
+      }
+    });
+  } catch (e) {
+    console.error('collectOdooAttachments_: getAttachments failed', e);
+  }
+
+  return { emailBody: cleanEmailHtml_(body, true), attachments: attachments };
 }
 
 /**
