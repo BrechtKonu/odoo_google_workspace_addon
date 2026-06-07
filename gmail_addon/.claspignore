@@ -1,0 +1,4 @@
+# Push only the Apps Script sources to the deployed project.
+**/**
+!appsscript.json
+!*.gs

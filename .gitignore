@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# Node / tooling
+node_modules/
+npm-debug.log*
+
+# clasp (Apps Script) — per-developer / per-deployment, never commit
+.clasp.json
+.clasprc.json
+
+# OS / editor
+.DS_Store
+Thumbs.db
+*.swp
+.idea/
+.vscode/
+
+# Local agent / session state
+.remember/
+
+# Logs
+*.log

@@ -1,0 +1,27 @@
+{
+  "manifest_version": 3,
+  "name": "Konu Odoo Workspace (Chrome)",
+  "version": "0.1.0",
+  "description": "Thin companion to the Konu Google Workspace add-on: detect Odoo task/ticket references inline in Gmail and link/preview them. Shares the add-on's Odoo HTTP endpoint.",
+  "permissions": ["storage"],
+  "host_permissions": [
+    "https://*.odoo.com/*",
+    "https://*.konu.be/*",
+    "https://*.konu.care/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_title": "Konu Odoo Workspace",
+    "default_popup": "popup.html"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://mail.google.com/*"],
+      "js": ["content/gmail.js"],
+      "css": ["content/inline.css"],
+      "run_at": "document_idle"
+    }
+  ]
+}

@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <style>
+    body { font-family: Roboto, Arial, sans-serif; width: 320px; margin: 0; padding: 12px; color: #202124; }
+    h1 { font-size: 14px; margin: 0 0 10px; color: #0d4345; }
+    label { display: block; font-size: 12px; margin: 8px 0 2px; color: #5f6368; }
+    input { width: 100%; box-sizing: border-box; padding: 6px 8px; border: 1px solid #dadce0; border-radius: 4px; font-size: 13px; }
+    button { margin-top: 10px; padding: 7px 12px; border: 0; border-radius: 4px; background: #0d4345; color: #fff; font-size: 13px; cursor: pointer; }
+    button.secondary { background: #e8eaed; color: #202124; }
+    #status { font-size: 12px; margin-top: 10px; min-height: 16px; }
+    .ok { color: #137333; } .err { color: #a50e0e; }
+    hr { border: 0; border-top: 1px solid #eee; margin: 12px 0; }
+    .result { font-size: 12px; padding: 6px; border: 1px solid #eee; border-radius: 4px; margin-top: 6px; }
+    .result a { color: #0d4345; font-weight: 600; }
+  </style>
+</head>
+<body>
+  <h1>Konu Odoo Workspace</h1>
+
+  <label for="url">Odoo URL</label>
+  <input id="url" type="url" placeholder="https://yourcompany.odoo.com">
+  <label for="token">API key</label>
+  <input id="token" type="password" placeholder="Odoo API key (user preferences)">
+  <button id="save">Save</button>
+  <button id="test" class="secondary">Test connection</button>
+
+  <hr>
+  <label for="ref">Look up a reference</label>
+  <input id="ref" type="text" placeholder="e.g. KOTASK-053">
+  <button id="lookup">Find in Odoo</button>
+  <div id="result"></div>
+
+  <div id="status"></div>
+  <script src="popup.js"></script>
+</body>
+</html>

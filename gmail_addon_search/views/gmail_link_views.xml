@@ -1,0 +1,114 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+
+    <!-- ─── gmail.email.link ─────────────────────────────────────────── -->
+    <record id="view_gmail_email_link_list" model="ir.ui.view">
+        <field name="name">gmail.email.link.list</field>
+        <field name="model">gmail.email.link</field>
+        <field name="arch" type="xml">
+            <list string="Linked Emails">
+                <field name="record_name"/>
+                <field name="res_model"/>
+                <field name="res_id"/>
+                <field name="gmail_thread_id" optional="hide"/>
+                <field name="rfc_message_id" optional="hide"/>
+                <field name="create_uid" optional="show"/>
+                <field name="create_date" optional="show"/>
+            </list>
+        </field>
+    </record>
+
+    <record id="view_gmail_email_link_form" model="ir.ui.view">
+        <field name="name">gmail.email.link.form</field>
+        <field name="model">gmail.email.link</field>
+        <field name="arch" type="xml">
+            <form string="Linked Email">
+                <sheet>
+                    <group>
+                        <group string="Odoo Record">
+                            <field name="record_name"/>
+                            <field name="res_model"/>
+                            <field name="res_id"/>
+                        </group>
+                        <group string="Email Identifiers">
+                            <field name="gmail_message_id"/>
+                            <field name="gmail_thread_id"/>
+                            <field name="rfc_message_id"/>
+                            <field name="outlook_item_id"/>
+                            <field name="outlook_conversation_id"/>
+                        </group>
+                    </group>
+                </sheet>
+            </form>
+        </field>
+    </record>
+
+    <record id="action_gmail_email_link" model="ir.actions.act_window">
+        <field name="name">Linked Emails</field>
+        <field name="res_model">gmail.email.link</field>
+        <field name="view_mode">list,form</field>
+    </record>
+
+    <!-- ─── gmail.document.link ──────────────────────────────────────── -->
+    <record id="view_gmail_document_link_list" model="ir.ui.view">
+        <field name="name">gmail.document.link.list</field>
+        <field name="model">gmail.document.link</field>
+        <field name="arch" type="xml">
+            <list string="Linked Documents">
+                <field name="record_name"/>
+                <field name="document_title"/>
+                <field name="host_app"/>
+                <field name="res_model"/>
+                <field name="res_id"/>
+                <field name="document_url" widget="url" optional="hide"/>
+                <field name="create_uid" optional="show"/>
+                <field name="create_date" optional="show"/>
+            </list>
+        </field>
+    </record>
+
+    <record id="view_gmail_document_link_form" model="ir.ui.view">
+        <field name="name">gmail.document.link.form</field>
+        <field name="model">gmail.document.link</field>
+        <field name="arch" type="xml">
+            <form string="Linked Document">
+                <sheet>
+                    <group>
+                        <group string="Odoo Record">
+                            <field name="record_name"/>
+                            <field name="res_model"/>
+                            <field name="res_id"/>
+                        </group>
+                        <group string="Google Document">
+                            <field name="document_title"/>
+                            <field name="host_app"/>
+                            <field name="document_url" widget="url"/>
+                            <field name="document_id"/>
+                        </group>
+                    </group>
+                </sheet>
+            </form>
+        </field>
+    </record>
+
+    <record id="action_gmail_document_link" model="ir.actions.act_window">
+        <field name="name">Linked Documents</field>
+        <field name="res_model">gmail.document.link</field>
+        <field name="view_mode">list,form</field>
+    </record>
+
+    <!-- ─── Menu (Settings ▸ Technical) ──────────────────────────────── -->
+    <menuitem id="menu_gmail_links_root"
+              name="Workspace Add-on Links"
+              parent="base.menu_custom"
+              sequence="50"/>
+    <menuitem id="menu_gmail_email_link"
+              parent="menu_gmail_links_root"
+              action="action_gmail_email_link"
+              sequence="10"/>
+    <menuitem id="menu_gmail_document_link"
+              parent="menu_gmail_links_root"
+              action="action_gmail_document_link"
+              sequence="20"/>
+
+</odoo>

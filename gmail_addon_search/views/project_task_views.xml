@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="view_task_form_gmail_links" model="ir.ui.view">
+        <field name="name">project.task.form.gmail.links</field>
+        <field name="model">project.task</field>
+        <field name="inherit_id" ref="project.view_task_form2"/>
+        <field name="arch" type="xml">
+            <xpath expr="//div[@name='button_box']" position="inside">
+                <button name="action_view_gmail_email_links" type="object"
+                        class="oe_stat_button" icon="fa-envelope"
+                        invisible="gmail_email_link_count == 0">
+                    <field name="gmail_email_link_count" widget="statinfo" string="Emails"/>
+                </button>
+                <button name="action_view_gmail_document_links" type="object"
+                        class="oe_stat_button" icon="fa-file-text-o"
+                        invisible="gmail_document_link_count == 0">
+                    <field name="gmail_document_link_count" widget="statinfo" string="Docs"/>
+                </button>
+            </xpath>
+        </field>
+    </record>
+</odoo>

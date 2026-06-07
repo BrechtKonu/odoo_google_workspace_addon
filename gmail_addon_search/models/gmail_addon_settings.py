@@ -201,8 +201,8 @@ class GmailAddonConfig(models.AbstractModel):
             return []
 
         if field_name == 'id':
-            numeric = ''.join(ch for ch in str(search_term or '') if ch.isdigit())
-            return [('id', '=', int(numeric))] if numeric else []
+            term = str(search_term or '').strip()
+            return [('id', '=', int(term))] if term.isdigit() else []
 
         field_rec = self.env['ir.model.fields'].sudo().search([
             ('model', '=', self._get_spec(record_type)['model']),
@@ -214,8 +214,8 @@ class GmailAddonConfig(models.AbstractModel):
         if field_rec.ttype in ('char', 'text', 'selection'):
             return [(field_name, 'ilike', search_term)]
         if field_rec.ttype == 'integer':
-            numeric = ''.join(ch for ch in str(search_term or '') if ch.isdigit())
-            return [(field_name, '=', int(numeric))] if numeric else []
+            term = str(search_term or '').strip()
+            return [(field_name, '=', int(term))] if term.isdigit() else []
         return []
 
     def apply_extra_values(self, record_type, extra_values):
