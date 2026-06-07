@@ -316,7 +316,7 @@ class GmailAddonController(http.Controller):
             domain = expression.AND([domain, expression.OR(identifier_domains)])
 
         if not request.env['gmail.email.link'].search(domain, limit=1):
-            request.env['gmail.email.link'].create({
+            vals = {
                 'rfc_message_id': rfc_message_id or '',
                 'gmail_message_id': gmail_message_id or '',
                 'gmail_thread_id': gmail_thread_id or '',
@@ -325,7 +325,21 @@ class GmailAddonController(http.Controller):
                 'res_model': res_model,
                 'res_id': res_id,
                 'record_name': record_name,
-            })
+            }
+            company_id = self._record_company_id(res_model, res_id)
+            if company_id:
+                vals['company_id'] = company_id
+            request.env['gmail.email.link'].create(vals)
+
+    def _record_company_id(self, res_model, res_id):
+        """Company of the linked record, to scope the link's multi-company rule."""
+        try:
+            record = request.env[res_model].browse(int(res_id))
+            if record.exists() and 'company_id' in record._fields and record.company_id:
+                return record.company_id.id
+        except Exception:
+            pass
+        return False
 
     def _rfc_message_id_variants(self, rfc_message_id):
         """
@@ -719,7 +733,7 @@ class GmailAddonController(http.Controller):
                 link.write(vals)
             return {'success': True, 'link_id': link.id, 'already_linked': True}
 
-        link = Link.create({
+        doc_vals = {
             'document_id': document_id,
             'host_app': host,
             'res_model': res_model,
@@ -727,7 +741,10 @@ class GmailAddonController(http.Controller):
             'record_name': record_name or record.display_name,
             'document_title': document_title or '',
             'document_url': document_url or '',
-        })
+        }
+        if 'company_id' in record._fields and record.company_id:
+            doc_vals['company_id'] = record.company_id.id
+        link = Link.create(doc_vals)
         self._post_document_link_note(record, link)
         return {'success': True, 'link_id': link.id}
 

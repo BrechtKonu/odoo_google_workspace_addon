@@ -14,6 +14,9 @@ class GmailEmailLink(models.Model):
     res_model = fields.Char(required=True, index=True)  # project.task / helpdesk.ticket / crm.lead
     res_id = fields.Integer(required=True, index=True)
     record_name = fields.Char()  # cached display name
+    company_id = fields.Many2one(
+        'res.company', index=True, default=lambda self: self.env.company,
+        help='Company of the linked record; scopes multi-company visibility.')
 
     @api.depends('record_name', 'res_model', 'res_id')
     def _compute_display_name(self):

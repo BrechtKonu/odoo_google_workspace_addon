@@ -1,6 +1,6 @@
 {
     'name': 'Google Workspace Add-on',
-    'version': '19.0.1.5.0',
+    'version': '19.0.1.6.0',
     'category': 'Productivity/Mail Plugins',
     'summary': 'Google Workspace add-on companion: search tasks/tickets, create records, log emails, cross-link docs',
     'description': """
@@ -20,6 +20,7 @@ CRM (leads) support is optional and gracefully degraded when not installed.
     'depends': ['mail_plugin', 'project', 'helpdesk'],
     'data': [
         'security/ir.model.access.csv',
+        'security/gmail_link_rules.xml',
         'data/ir_cron.xml',
         'data/server_actions.xml',
         'views/res_config_settings_views.xml',
