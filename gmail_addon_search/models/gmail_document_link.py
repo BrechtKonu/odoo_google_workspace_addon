@@ -7,12 +7,14 @@ class GmailDocumentLink(models.Model):
     _rec_name = 'record_name'
 
     document_id = fields.Char(required=True, index=True)
+    document_title = fields.Char(help='Cached title of the linked Google Doc/Sheet.')
+    document_url = fields.Char(help='Direct URL back to the linked Google Doc/Sheet.')
     host_app = fields.Selection(
         selection=[('docs', 'Google Docs'), ('sheets', 'Google Sheets')],
         required=True,
         index=True,
     )
-    res_model = fields.Char(required=True, index=True)  # 'project.task' or 'helpdesk.ticket'
+    res_model = fields.Char(required=True, index=True)  # project.task / helpdesk.ticket / crm.lead
     res_id = fields.Integer(required=True, index=True)
     record_name = fields.Char()
 

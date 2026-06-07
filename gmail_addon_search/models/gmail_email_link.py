@@ -1,4 +1,4 @@
-from odoo import api, fields, models
+from odoo import _, api, fields, models
 
 
 class GmailEmailLink(models.Model):
@@ -11,9 +11,16 @@ class GmailEmailLink(models.Model):
     gmail_thread_id = fields.Char(index=True)        # Gmail thread ID
     outlook_item_id = fields.Char(index=True)        # Outlook item identifier
     outlook_conversation_id = fields.Char(index=True)  # Outlook conversation ID
-    res_model = fields.Char(required=True, index=True)  # 'project.task' or 'helpdesk.ticket'
+    res_model = fields.Char(required=True, index=True)  # project.task / helpdesk.ticket / crm.lead
     res_id = fields.Integer(required=True, index=True)
     record_name = fields.Char()  # cached display name
+
+    @api.depends('record_name', 'res_model', 'res_id')
+    def _compute_display_name(self):
+        for link in self:
+            link.display_name = link.record_name or (
+                '%s,%s' % (link.res_model, link.res_id) if link.res_model else _('Email link')
+            )
 
     @api.model
     def backfill_from_mail_messages(self, limit=2000):
