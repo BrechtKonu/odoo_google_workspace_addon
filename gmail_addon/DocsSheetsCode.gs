@@ -201,11 +201,16 @@ function buildDocsSheetsHomeCard_(e, hostHint) {
   var ctx = getEditorContext_(e, hostHint);
   var memory = getDocumentMemory_(ctx);
   var linkedRecords = [];
+  var linkedError = '';
 
   if (ctx.documentId && ctx.hostApp) {
     try {
-      linkedRecords = (apiDocumentLinkedRecords_(ctx.documentId, ctx.hostApp).records) || [];
-    } catch (_) {}
+      var linkedResp = apiDocumentLinkedRecords_(ctx.documentId, ctx.hostApp);
+      if (linkedResp && linkedResp.error) linkedError = linkedResp.error;
+      linkedRecords = (linkedResp && linkedResp.records) || [];
+    } catch (err) {
+      linkedError = 'Could not reach Odoo — check the connection in Settings.';
+    }
   }
 
   var suggestedProjectId = String(memory.last_project_id || '');
@@ -231,7 +236,10 @@ function buildDocsSheetsHomeCard_(e, hostHint) {
   }
 
   var linkedSection = CardService.newCardSection().setHeader('Recent linked to this document');
-  if (linkedRecords.length === 0) {
+  if (linkedError) {
+    linkedSection.addWidget(CardService.newTextParagraph()
+      .setText('<font color="#a50e0e">' + escapeHtml_(linkedError) + '</font>'));
+  } else if (linkedRecords.length === 0) {
     linkedSection.addWidget(CardService.newTextParagraph().setText('No linked tasks or tickets yet.'));
   } else {
     linkedRecords.forEach(function(rec) {
@@ -945,7 +953,7 @@ function onDocCreateTask(e) {
     });
     linkRecordToCurrentDocument_(ctx, 'project.task', result.task_id, name);
 
-    var taskRef = '#' + result.task_id;
+    var taskRef = result.task_number || ('#' + result.task_id);
     var refStr = taskRef + ' · ' + name;
     var successSection = CardService.newCardSection()
       .addWidget(CardService.newTextParagraph().setText('Task created successfully!'))
@@ -1103,7 +1111,7 @@ function onDocCreateTicket(e) {
     });
     linkRecordToCurrentDocument_(ctx, 'helpdesk.ticket', result.ticket_id, name);
 
-    var ticketRef = '#' + result.ticket_id;
+    var ticketRef = result.ticket_ref || ('#' + result.ticket_id);
     var refStr = ticketRef + ' · ' + name;
     var successSection = CardService.newCardSection()
       .addWidget(CardService.newTextParagraph().setText('Ticket created successfully!'))

@@ -855,6 +855,17 @@ class GmailAddonController(http.Controller):
 
     @http.route('/gmail_addon/suggest_context', type='jsonrpc', auth='outlook')
     def suggest_context(self, sender_email='', filter_mine=False, **kwargs):
+        try:
+            return self._suggest_context_impl(sender_email, filter_mine, **kwargs)
+        except Exception:
+            _logger.exception('suggest_context failed for %s', sender_email)
+            return {
+                'partner_id': None, 'partner_name': '', 'partner_email': sender_email,
+                'recent_tasks': [], 'recent_tickets': [], 'recent_leads': [],
+                'company_tasks': [], 'company_tickets': [], 'company_leads': [],
+            }
+
+    def _suggest_context_impl(self, sender_email='', filter_mine=False, **kwargs):
         """
         Given sender email, suggest project + team and return recent tasks/tickets.
         """
