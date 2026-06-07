@@ -298,7 +298,13 @@ class ResConfigSettings(models.TransientModel):
         fields_model = self.env['ir.model.fields'].sudo()
 
         def _many2one(record_type):
-            return int(icp.get_param(f'gmail_addon_search.{record_type}.reference_field_id') or 0)
+            # Return False (not 0) for unset/stale ids. A Many2one left at the
+            # integer 0 makes the settings form's onchange browse(0); Odoo 19's
+            # web_read cleanup() then treats that falsy id as a NewId and calls
+            # (0).origin -> "'int' object has no attribute 'origin'", crashing
+            # the whole Settings page on a fresh install.
+            rid = int(icp.get_param(f'gmail_addon_search.{record_type}.reference_field_id') or 0)
+            return rid if rid and fields_model.browse(rid).exists() else False
 
         def _many2many(record_type):
             raw = icp.get_param(f'gmail_addon_search.{record_type}.extra_field_ids') or ''
