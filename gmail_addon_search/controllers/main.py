@@ -6,8 +6,8 @@ from xml.sax.saxutils import escape
 from markupsafe import Markup
 
 from odoo import _, http
+from odoo.fields import Domain
 from odoo.http import request
-from odoo.osv import expression
 from odoo.tools import html_sanitize
 from odoo.tools.mail import email_normalize
 
@@ -67,7 +67,7 @@ class GmailAddonController(http.Controller):
         for domain in extra_domains or []:
             if domain:
                 domains.append(domain)
-        return expression.OR(domains)
+        return Domain.OR(domains)
 
     def _task_url(self, task):
         base = self._get_base_url()
@@ -365,7 +365,7 @@ class GmailAddonController(http.Controller):
         if outlook_conversation_id:
             identifier_domains.append([('outlook_conversation_id', '=', outlook_conversation_id)])
         if identifier_domains:
-            domain = expression.AND([domain, expression.OR(identifier_domains)])
+            domain = Domain.AND([domain, Domain.OR(identifier_domains)])
 
         if not request.env['gmail.email.link'].search(domain, limit=1):
             vals = {
@@ -924,9 +924,9 @@ class GmailAddonController(http.Controller):
             ident.append([('rfc_message_id', '=', variant)])
         if not ident:
             return {'error': _('No email identifier provided')}
-        domain = expression.AND([
+        domain = Domain.AND([
             [('res_model', '=', res_model), ('res_id', '=', rid)],
-            expression.OR(ident),
+            Domain.OR(ident),
         ])
         links = Link.search(domain)
         count = len(links)
