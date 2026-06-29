@@ -1408,7 +1408,8 @@ class GmailAddonController(http.Controller):
                     extra_values=None,
                     email_body='', email_subject='', author_email='',
                     rfc_message_id='', gmail_message_id='', gmail_thread_id='',
-                    outlook_item_id='', outlook_conversation_id='', **kwargs):
+                    outlook_item_id='', outlook_conversation_id='',
+                    attachments=None, **kwargs):
         env = request.env
         vals = {
             'name': name,
@@ -1428,20 +1429,24 @@ class GmailAddonController(http.Controller):
         task = env['project.task'].create(vals)
         self._cc_to_followers(task, cc_addresses)
 
-        if email_body:
-            sanitized_body = self._sanitize_email_body(email_body)
+        if email_body or attachments:
             author = None
             if author_email:
                 normalized = email_normalize(author_email) or author_email
                 author = env['res.partner'].search(
                     [('email_normalized', '=', normalized)], limit=1
                 )
+            # Rehost inline images as ir.attachment, rewriting cid: refs to
+            # /web/image before sanitising (mirrors log_email). File attachments
+            # are handled add-on side via Drive links already in the body.
+            attachment_ids, email_body = self._attach_email_files(task, attachments, email_body or '')
             task.message_post(
-                body=Markup(sanitized_body),
+                body=Markup(self._sanitize_email_body(email_body)),
                 subject=email_subject or 'Logged from Gmail',
                 message_type='comment',
                 subtype_xmlid='mail.mt_note',
                 author_id=author.id if author else None,
+                attachment_ids=attachment_ids or None,
             )
 
         self._store_email_link(rfc_message_id, 'project.task', task.id, task.name,
@@ -1459,7 +1464,8 @@ class GmailAddonController(http.Controller):
                       description='', cc_addresses='',
                       email_body='', email_subject='', author_email='',
                       rfc_message_id='', gmail_message_id='', gmail_thread_id='',
-                      outlook_item_id='', outlook_conversation_id='', **kwargs):
+                      outlook_item_id='', outlook_conversation_id='',
+                      attachments=None, **kwargs):
         try:
             env = request.env
             vals = {
@@ -1475,20 +1481,21 @@ class GmailAddonController(http.Controller):
             ticket = env['helpdesk.ticket'].create(vals)
             self._cc_to_followers(ticket, cc_addresses)
 
-            if email_body:
-                sanitized_body = self._sanitize_email_body(email_body)
+            if email_body or attachments:
                 author = None
                 if author_email:
                     normalized = email_normalize(author_email) or author_email
                     author = env['res.partner'].search(
                         [('email_normalized', '=', normalized)], limit=1
                     )
+                attachment_ids, email_body = self._attach_email_files(ticket, attachments, email_body or '')
                 ticket.message_post(
-                    body=Markup(sanitized_body),
+                    body=Markup(self._sanitize_email_body(email_body)),
                     subject=email_subject or 'Logged from Gmail',
                     message_type='comment',
                     subtype_xmlid='mail.mt_note',
                     author_id=author.id if author else None,
+                    attachment_ids=attachment_ids or None,
                 )
 
             self._store_email_link(rfc_message_id, 'helpdesk.ticket', ticket.id, ticket.name,
@@ -1529,7 +1536,8 @@ class GmailAddonController(http.Controller):
                     extra_values=None,
                     email_body='', email_subject='', author_email='',
                     rfc_message_id='', gmail_message_id='', gmail_thread_id='',
-                    outlook_item_id='', outlook_conversation_id='', **kwargs):
+                    outlook_item_id='', outlook_conversation_id='',
+                    attachments=None, **kwargs):
         try:
             env = request.env
             vals = {
@@ -1553,20 +1561,21 @@ class GmailAddonController(http.Controller):
             lead = env['crm.lead'].create(vals)
             self._cc_to_followers(lead, cc_addresses)
 
-            if email_body:
-                sanitized_body = self._sanitize_email_body(email_body)
+            if email_body or attachments:
                 author = None
                 if author_email:
                     normalized = email_normalize(author_email) or author_email
                     author = env['res.partner'].search(
                         [('email_normalized', '=', normalized)], limit=1
                     )
+                attachment_ids, email_body = self._attach_email_files(lead, attachments, email_body or '')
                 lead.message_post(
-                    body=Markup(sanitized_body),
+                    body=Markup(self._sanitize_email_body(email_body)),
                     subject=email_subject or 'Logged from Gmail',
                     message_type='comment',
                     subtype_xmlid='mail.mt_note',
                     author_id=author.id if author else None,
+                    attachment_ids=attachment_ids or None,
                 )
 
             self._store_email_link(rfc_message_id, 'crm.lead', lead.id, lead.name,
