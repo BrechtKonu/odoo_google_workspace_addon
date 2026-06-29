@@ -1,6 +1,6 @@
 {
     'name': 'Google Workspace Add-on',
-    'version': '19.0.1.7.3',
+    'version': '19.0.1.7.4',
     'category': 'Productivity/Mail Plugins',
     'summary': 'Google Workspace add-on companion: search tasks/tickets, create records, log emails, cross-link docs',
     'description': """
