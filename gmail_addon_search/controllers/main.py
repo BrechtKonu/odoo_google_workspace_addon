@@ -15,12 +15,17 @@ _logger = logging.getLogger(__name__)
 
 
 _TASK_FIELDS_BASE = ['id', 'task_number', 'name', 'project_id', 'stage_id',
-                     'partner_id', 'user_ids', 'write_date']
+                     'partner_id', 'user_ids', 'priority', 'date_deadline',
+                     'tag_ids', 'write_date']
 _TICKET_FIELDS_BASE = ['id', 'name', 'team_id', 'stage_id', 'partner_id',
-                       'priority', 'ticket_ref', 'user_id', 'write_date']
+                       'priority', 'kanban_state', 'sla_deadline', 'tag_ids',
+                       'ticket_ref', 'user_id', 'write_date']
 _LEAD_FIELDS_BASE = ['id', 'name', 'type', 'team_id', 'stage_id', 'partner_id',
                      'user_id', 'email_from', 'contact_name', 'partner_name', 'write_date']
 _PRIORITY_MAP = {'0': 'Low', '1': 'Normal', '2': 'High', '3': 'Urgent'}
+# helpdesk.ticket kanban_state -> short human label (project.task dropped
+# kanban_state for `state` in 17.0, so this signal is ticket-only).
+_KANBAN_STATE_MAP = {'normal': 'In progress', 'done': 'Ready', 'blocked': 'Blocked'}
 
 
 class GmailAddonController(http.Controller):
@@ -138,11 +143,12 @@ class GmailAddonController(http.Controller):
             domain += [('user_id', '=', int(user_id))]
         return domain
 
-    def _format_task_dict(self, t, base_url, user_names_map=None):
+    def _format_task_dict(self, t, base_url, user_names_map=None, tag_names_map=None):
         user_ids = t.get('user_ids') or []
         user_name = ', '.join(
             (user_names_map or {}).get(uid, '') for uid in user_ids
         )
+        priority = t.get('priority') or '0'
         task_ref = self._record_reference('task', t)
         return {
             'id': t['id'],
@@ -153,11 +159,17 @@ class GmailAddonController(http.Controller):
             'stage_name': t['stage_id'][1] if t.get('stage_id') else '',
             'partner_name': t['partner_id'][1] if t.get('partner_id') else '',
             'user_name': user_name,
+            'priority': _PRIORITY_MAP.get(priority, 'Low'),
+            'priority_level': priority,
+            'deadline': str(t['date_deadline']) if t.get('date_deadline') else '',
+            'tag_names': self._tag_names(t, tag_names_map),
             'url': f"{base_url}/odoo/all-tasks/{t['id']}",
             'write_date': str(t['write_date']) if t.get('write_date') else '',
         }
 
-    def _format_ticket_dict(self, t, base_url):
+    def _format_ticket_dict(self, t, base_url, tag_names_map=None):
+        priority = t.get('priority') or '1'
+        kanban_state = t.get('kanban_state') or 'normal'
         ticket_ref = self._record_reference('ticket', t)
         return {
             'id': t['id'],
@@ -165,7 +177,12 @@ class GmailAddonController(http.Controller):
             'team_name': t['team_id'][1] if t.get('team_id') else '',
             'stage_name': t['stage_id'][1] if t.get('stage_id') else '',
             'partner_name': t['partner_id'][1] if t.get('partner_id') else '',
-            'priority': _PRIORITY_MAP.get(t.get('priority', '1'), 'Normal'),
+            'priority': _PRIORITY_MAP.get(priority, 'Normal'),
+            'priority_level': priority,
+            'kanban_state': kanban_state,
+            'kanban_state_label': _KANBAN_STATE_MAP.get(kanban_state, ''),
+            'deadline': str(t['sla_deadline']) if t.get('sla_deadline') else '',
+            'tag_names': self._tag_names(t, tag_names_map),
             'ticket_ref': ticket_ref or '',
             'reference': ticket_ref or '',
             'user_name': t['user_id'][1] if t.get('user_id') else '',
@@ -198,6 +215,25 @@ class GmailAddonController(http.Controller):
         if not all_ids:
             return {}
         return {u['id']: u['name'] for u in env['res.users'].browse(all_ids).read(['name'])}
+
+    def _tag_names_map(self, env, rows, tag_model):
+        """Batch-resolve tag_ids -> names for a list of search_read rows.
+
+        One read on the tag model instead of a browse per record (avoids N+1
+        when rendering search results / previews).
+        """
+        all_ids = list({tid for r in rows for tid in (r.get('tag_ids') or [])})
+        if not all_ids:
+            return {}
+        return {t['id']: t['name'] for t in env[tag_model].browse(all_ids).read(['name'])}
+
+    def _tag_names(self, row, tag_names_map):
+        """Ordered, non-empty tag labels for one row from a prebuilt id->name map."""
+        return [
+            (tag_names_map or {}).get(tid, '')
+            for tid in (row.get('tag_ids') or [])
+            if (tag_names_map or {}).get(tid)
+        ]
 
     def _find_partner_by_email(self, email):
         """
@@ -772,9 +808,12 @@ class GmailAddonController(http.Controller):
                 return {'record': None}
             base_url = self._get_base_url()
             if record_type == 'task':
-                record = self._format_task_dict(rows[0], base_url, self._user_names_map(env, rows))
+                record = self._format_task_dict(
+                    rows[0], base_url, self._user_names_map(env, rows),
+                    self._tag_names_map(env, rows, 'project.tags'))
             elif record_type == 'ticket':
-                record = self._format_ticket_dict(rows[0], base_url)
+                record = self._format_ticket_dict(
+                    rows[0], base_url, self._tag_names_map(env, rows, 'helpdesk.tag'))
             else:
                 record = self._format_lead_dict(rows[0], base_url)
             return {'record': record, 'record_type': record_type}
@@ -1218,8 +1257,9 @@ class GmailAddonController(http.Controller):
             total = env['project.task'].search_count(domain)
             base_url = self._get_base_url()
             user_map = self._user_names_map(env, tasks_data)
+            tag_map = self._tag_names_map(env, tasks_data, 'project.tags')
             return {
-                'tasks': [self._format_task_dict(t, base_url, user_map) for t in tasks_data],
+                'tasks': [self._format_task_dict(t, base_url, user_map, tag_map) for t in tasks_data],
                 'total': total,
             }
         except Exception:
@@ -1240,8 +1280,9 @@ class GmailAddonController(http.Controller):
             )
             total = env['helpdesk.ticket'].search_count(domain)
             base_url = self._get_base_url()
+            tag_map = self._tag_names_map(env, tickets_data, 'helpdesk.tag')
             return {
-                'tickets': [self._format_ticket_dict(t, base_url) for t in tickets_data],
+                'tickets': [self._format_ticket_dict(t, base_url, tag_map) for t in tickets_data],
                 'total': total,
             }
         except Exception:
